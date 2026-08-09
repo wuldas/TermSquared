@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+    <TargetFramework>net10.0-windows</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\TermSquared.Protocols.Ftp\TermSquared.Protocols.Ftp.csproj" />
+    <ProjectReference Include="..\..\src\TermSquared.Protocols.Rdp\TermSquared.Protocols.Rdp.csproj" />
+    <ProjectReference Include="..\..\src\TermSquared.Protocols.Ssh\TermSquared.Protocols.Ssh.csproj" />
+    <ProjectReference Include="..\..\src\TermSquared.Protocols.Vnc\TermSquared.Protocols.Vnc.csproj" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\TermSquared.Core\TermSquared.Core.csproj" />
+    <ProjectReference Include="..\TermSquared.Mcp\TermSquared.Mcp.csproj" />
+    <ProjectReference Include="..\TermSquared.Security\TermSquared.Security.csproj" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" />
+  </ItemGroup>
+</Project>

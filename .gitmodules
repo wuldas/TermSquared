@@ -1,0 +1,3 @@
+[submodule "external/Square"]
+	path = external/Square
+	url = https://github.com/wuldas/Square.git

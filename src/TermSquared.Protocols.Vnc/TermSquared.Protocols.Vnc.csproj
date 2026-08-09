@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\TermSquared.Core\TermSquared.Core.csproj" />
+  </ItemGroup>
+</Project>

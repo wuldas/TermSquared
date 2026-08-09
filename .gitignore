@@ -1,0 +1,13 @@
+bin/
+obj/
+.vs/
+.idea/
+TestResults/
+artifacts/
+*.user
+*.suo
+*.nupkg
+*.snupkg
+src/TermSquared.App/connections.json
+*.secrets.json
+*.secret

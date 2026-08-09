@@ -1,0 +1,20 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TermSquared.Core/TermSquared.Core.csproj" />
+    <Project Path="src/TermSquared.Security/TermSquared.Security.csproj" />
+    <Project Path="src/TermSquared.Protocols.Ssh/TermSquared.Protocols.Ssh.csproj" />
+    <Project Path="src/TermSquared.Protocols.Ftp/TermSquared.Protocols.Ftp.csproj" />
+    <Project Path="src/TermSquared.Protocols.Rdp/TermSquared.Protocols.Rdp.csproj" />
+    <Project Path="src/TermSquared.Protocols.Vnc/TermSquared.Protocols.Vnc.csproj" />
+    <Project Path="src/TermSquared.Mcp/TermSquared.Mcp.csproj" />
+    <Project Path="src/TermSquared.Mcp.StdioBridge/TermSquared.Mcp.StdioBridge.csproj" />
+    <Project Path="src/TermSquared.Mcp.HttpHost/TermSquared.Mcp.HttpHost.csproj" />
+    <Project Path="src/TermSquared.App/TermSquared.App.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TermSquared.Core.Tests/TermSquared.Core.Tests.csproj" />
+    <Project Path="tests/TermSquared.Security.Tests/TermSquared.Security.Tests.csproj" />
+    <Project Path="tests/TermSquared.Protocols.Tests/TermSquared.Protocols.Tests.csproj" />
+    <Project Path="tests/TermSquared.Mcp.Tests/TermSquared.Mcp.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\TermSquared.Core\TermSquared.Core.csproj" />
+    <ProjectReference Include="..\TermSquared.Security\TermSquared.Security.csproj" />
+    <ProjectReference Include="..\TermSquared.Protocols.Ssh\TermSquared.Protocols.Ssh.csproj" />
+    <ProjectReference Include="..\TermSquared.Protocols.Ftp\TermSquared.Protocols.Ftp.csproj" />
+    <ProjectReference Include="..\TermSquared.Protocols.Rdp\TermSquared.Protocols.Rdp.csproj" />
+    <ProjectReference Include="..\TermSquared.Protocols.Vnc\TermSquared.Protocols.Vnc.csproj" />
+    <ProjectReference Include="..\TermSquared.Mcp\TermSquared.Mcp.csproj" />
+    <ProjectReference Include="$(SquareRoot)\src\Square\Square.csproj" />
+    <ProjectReference Include="$(SquareRoot)\src\Square.Platform.Win32\Square.Platform.Win32.csproj" />
+    <ProjectReference Include="$(SquareRoot)\src\Square.Extensions.Terminal\Square.Extensions.Terminal.csproj" />
+    <ProjectReference Include="$(SquareRoot)\src\Square.DevTools\Square.DevTools.csproj" />
+    <ProjectReference Include="$(SquareRoot)\src\Square.Compiler\Square.Compiler.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" SetTargetFramework="TargetFramework=netstandard2.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="$(SquareRoot)\src\Square.Platform.Win32\buildTransitive\Square.Platform.Win32.Registration.cs" Link="Square.Generated\PlatformRegistration.g.cs" />
+  </ItemGroup>
+</Project>
