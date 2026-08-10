@@ -1,4 +1,5 @@
 using Square.Extensions.Terminal;
+using Square.Extensions.CodeEditor;
 using Square.DevTools;
 using Square.Graphics;
 using Square.Hosting;
@@ -11,6 +12,7 @@ public static class Program
     public static void Main()
     {
         TerminalRegistration.RegisterDefaults();
+        CodeEditorRegistration.RegisterDefaults();
         var configPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             ".ssh",
@@ -23,6 +25,7 @@ public static class Program
             RenderingMode = RenderMode.Auto
         };
         controller.Attach(window);
+        window.LoadGlobalCssText(AppTheme.Css);
         window.Load(controller.BuildWorkspace());
         if (string.Equals(Environment.GetEnvironmentVariable("TERMSQUARED_DEVTOOLS"), "1", StringComparison.Ordinal))
         {

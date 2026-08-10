@@ -1,3 +1,4 @@
+using TermSquared.Core;
 using TermSquared.Security;
 
 namespace TermSquared.Security.Tests;
@@ -109,5 +110,21 @@ public sealed class SecurityTests
         var changed = await store.CheckAsync("host", 22, "ssh-ed25519", new byte[] { 4, 5, 6 }, default);
         Assert.Equal(HostKeyStatus.Trusted, trusted.Status);
         Assert.Equal(HostKeyStatus.Changed, changed.Status);
+    }
+
+    [Fact]
+    public async Task RoutingSecretStoreDispatchesByReferenceStore()
+    {
+        using var memory = new InMemorySecretStore();
+        var router = new RoutingSecretStore(memory, new Dictionary<string, ISecretStore>
+        {
+            ["memory"] = memory
+        });
+
+        var reference = await router.StoreAsync("test", "secret".AsMemory(), default);
+
+        Assert.Equal("secret", await router.RetrieveAsync(reference, default));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            router.RetrieveAsync(new SecretReference("unknown", reference.Id), default));
     }
 }

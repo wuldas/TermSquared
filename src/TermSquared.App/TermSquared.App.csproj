@@ -15,6 +15,7 @@
     <ProjectReference Include="$(SquareRoot)\src\Square\Square.csproj" />
     <ProjectReference Include="$(SquareRoot)\src\Square.Platform.Win32\Square.Platform.Win32.csproj" />
     <ProjectReference Include="$(SquareRoot)\src\Square.Extensions.Terminal\Square.Extensions.Terminal.csproj" />
+    <ProjectReference Include="$(SquareRoot)\src\Square.Extensions.CodeEditor\Square.Extensions.CodeEditor.csproj" />
     <ProjectReference Include="$(SquareRoot)\src\Square.DevTools\Square.DevTools.csproj" />
     <ProjectReference Include="$(SquareRoot)\src\Square.Compiler\Square.Compiler.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" SetTargetFramework="TargetFramework=netstandard2.0" />
   </ItemGroup>

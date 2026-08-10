@@ -1,4 +1,6 @@
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using TermSquared.Core;
 using TermSquared.Security;
@@ -34,7 +36,7 @@ internal static class ConnectionConfigImporter
                 if (!string.IsNullOrEmpty(password))
                     secret = await secrets.StoreAsync("ssh-password", password.AsMemory(), cancellationToken).ConfigureAwait(false);
                 profiles.Add(new ConnectionProfile(
-                    Guid.NewGuid(), name, ConnectionProtocol.Ssh, host, port, username,
+                    CreateStableId(configuredAlias ?? name, host, port, username), name, ConnectionProtocol.Ssh, host, port, username,
                     secret is null ? AuthenticationKind.None : AuthenticationKind.Password,
                     secret, ConnectionCapabilities.Terminal | ConnectionCapabilities.FileBrowser,
                     publishedRoots.Length > 0 ? PublishedMcpScope.ReadOnly : PublishedMcpScope.None,
@@ -47,6 +49,14 @@ internal static class ConnectionConfigImporter
             secrets.Dispose();
             throw;
         }
+    }
+
+    private static Guid CreateStableId(string name, string host, int port, string username)
+    {
+        var identity = $"ssh\n{name.Trim()}\n{host.Trim().ToLowerInvariant()}\n{port}\n{username.Trim()}";
+        Span<byte> hash = stackalloc byte[32];
+        SHA256.HashData(Encoding.UTF8.GetBytes(identity), hash);
+        return new Guid(hash[..16]);
     }
 
     private static IEnumerable<(JsonElement Profile, string? Alias)> EnumerateProfiles(JsonElement root)

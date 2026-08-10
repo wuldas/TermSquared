@@ -3,5 +3,6 @@
     <ProjectReference Include="..\TermSquared.Core\TermSquared.Core.csproj" />
     <ProjectReference Include="..\TermSquared.Security\TermSquared.Security.csproj" />
     <PackageReference Include="SSH.NET" />
+    <InternalsVisibleTo Include="TermSquared.Protocols.Tests" />
   </ItemGroup>
 </Project>

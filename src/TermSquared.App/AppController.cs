@@ -1,16 +1,21 @@
 using System.Net.Sockets;
+using System.Globalization;
 using System.Text;
 using Square.Controls;
 using Square.Events;
+using Square.Extensions.CodeEditor;
 using Square.Extensions.Terminal;
 using Square.Hosting;
 using Square.Runtime;
+using Square.Graphics;
 using TermSquared.Core;
 using TermSquared.Protocols.Rdp;
 using TermSquared.Protocols.Ssh;
 using TermSquared.Protocols.Vnc;
 using TermSquared.Mcp;
 using TermSquared.Security;
+using Element = Square.UI.Element;
+using UIElement = Square.UI.UIElement;
 
 namespace TermSquared.App;
 
@@ -18,29 +23,63 @@ internal sealed class AppController : IDisposable
 {
     private readonly ImportedConfiguration _configuration;
     private readonly string _configPath;
+    private readonly ConnectionProfileStore _connectionProfiles;
+    private readonly ISecretStore _secrets;
     private readonly JsonKnownHostStore _knownHosts;
     private readonly AppRemoteOperations _remoteOperations;
     private readonly NamedPipeBrokerServer _broker;
     private readonly RdpLauncher _rdpLauncher = new();
     private readonly CancellationTokenSource _lifetime = new();
-    private readonly object _sessionGate = new();
+    private readonly WorkspaceSettingsStore _workspaceSettings;
+    private IReadOnlyList<ConnectionProfile> _profiles;
+    private readonly Dictionary<Guid, WorkspaceSession> _sessions = [];
+    private readonly Dictionary<string, ConnectionProfileTreeItem> _connectionItems = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ConnectionFolderTreeItem> _connectionFolders = new(StringComparer.Ordinal);
+    private View? _root;
     private AppWindow? _window;
-    private TerminalView? _terminal;
+    private View? _leftSidebar;
+    private View? _rightSidebar;
+    private View? _bottomPanel;
+    private Splitter? _leftSplitter;
+    private Splitter? _rightSplitter;
+    private Tree? _connectionTree;
+    private Tree? _sftpTree;
+    private View? _sessionTabsHost;
+    private View? _sessionContentHost;
+    private View? _protocolToolsHost;
+    private Text? _connectionEmptyState;
+    private View? _hostKeyApproval;
+    private View? _historyPanel;
+    private View? _historyItems;
+    private View? _sftpPanel;
+    private View? _securityPanel;
+    private View? _commandPanelBody;
+    private CodeEditor? _commandEditor;
     private Text? _sessionStatus;
     private Text? _details;
-    private Text? _fileResults;
-    private Text? _activeTabText;
-    private Input? _sendInput;
+    private Text? _sftpPathText;
+    private Text? _sessionTabStatus;
+    private Text? _rightPanelTitle;
+    private Text? _rightPanelSubtitle;
+    private FontIcon? _sessionTabStatusIcon;
+    private FontIcon? _rightPanelIcon;
+    private Input? _connectionFilter;
+    private Button? _connectButton;
+    private Button? _disconnectButton;
+    private Button? _refreshFilesButton;
+    private Button? _sendButton;
+    private Button? _clearCommandsButton;
+    private Button? _expandCommandsButton;
     private Button? _trustOnceButton;
     private Button? _trustStoreButton;
-    private Input? _rdpHost;
-    private Input? _rdpUsername;
-    private Input? _rdpPort;
-    private SshSession? _session;
-    private SshShellSession? _shell;
-    private Task? _shellReader;
     private ConnectionProfile? _selectedProfile;
-    private HostKeyCheck? _pendingHostKey;
+    private Guid? _activeSessionId;
+    private RemoteClipboardItem? _remoteClipboard;
+    private bool _hasHistory;
+    private string? _commandTextBeforeShortcut;
+    private Guid? _commandShortcutSessionId;
+    private bool _leftSidebarRequested = true;
+    private bool _rightSidebarRequested = true;
     private bool _disposed;
 
     public AppController(ImportedConfiguration configuration, string configPath)
@@ -50,8 +89,18 @@ internal sealed class AppController : IDisposable
         var dataRoot = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "TermSquared");
+        var protectedSecrets = new DpapiFileSecretStore(Path.Combine(dataRoot, "secrets"));
+        _secrets = new RoutingSecretStore(protectedSecrets, new Dictionary<string, ISecretStore>(StringComparer.Ordinal)
+        {
+            ["memory"] = configuration.VolatileSecrets,
+            ["dpapi-file"] = protectedSecrets
+        });
+        _connectionProfiles = ConnectionProfileStore.Load(Path.Combine(dataRoot, "connections.json"));
+        _profiles = _connectionProfiles.Merge(configuration.Profiles);
         _knownHosts = new JsonKnownHostStore(Path.Combine(dataRoot, "known-hosts.json"));
-        _remoteOperations = new AppRemoteOperations(configuration.Profiles, configuration.VolatileSecrets, _knownHosts);
+        _workspaceSettings = WorkspaceSettingsStore.Load(Path.Combine(dataRoot, "workspace.json"));
+        _workspaceSettings.EnsureConnections(_profiles.Select(profile => profile.Id).ToArray());
+        _remoteOperations = new AppRemoteOperations(_profiles, _secrets, _knownHosts);
         _broker = new NamedPipeBrokerServer(_remoteOperations, new NamedPipeBrokerOptions());
     }
 
@@ -59,271 +108,811 @@ internal sealed class AppController : IDisposable
     {
         _window = window;
         window.Closed += Dispose;
+        window.SizeChanged += ApplyResponsiveLayout;
         _broker.StartAsync(_lifetime.Token).GetAwaiter().GetResult();
     }
 
     public View BuildWorkspace()
     {
-        var root = Panel("#171717", "column", "100%", "100%");
+        var root = Panel("", "column", "100%", "100%");
+        _root = root;
+        root.ClassList.Add("app-shell");
         root.Style.Set("gap", "0");
-        root.Children.Add(BuildMenuBar());
+        root.Children.Add(BuildTopBar());
 
-        var body = Panel("#171717", "row", "100%", "auto");
+        var body = Panel("", "row", "100%", "auto");
         body.Style.Set("flex", "1");
         body.Style.Set("min-height", "0");
         body.Style.Set("gap", "0");
 
-        var left = Panel("#1b1b1b", "column", "260px", "100%");
-        left.Style.Set("min-width", "220px");
-        left.Style.Set("border-right", "1px solid #343434");
-        left.Style.Set("gap", "0");
-        left.Children.Add(PanelHeader("■  资源管理器", "⚙   ×"));
-        left.Children.Add(Caption("筛选", "#676767", "32px", "10px 14px"));
-        var connectionList = new ScrollViewer();
-        connectionList.Style.Set("flex", "1");
-        connectionList.Style.Set("min-height", "0");
-        connectionList.Style.Set("background", "#1b1b1b");
-        if (_configuration.Profiles.Count == 0)
-            connectionList.Children.Add(Caption("没有导入连接", "#8c96a8", "36px", "8px 16px"));
-        foreach (var profile in _configuration.Profiles.Take(40))
-            connectionList.Children.Add(ResourceButton(profile));
-        left.Children.Add(connectionList);
-        left.Children.Add(Caption("MCP Broker  ● 运行中", "#86efac", "34px", "8px 14px"));
+        _leftSidebar = BuildConnectionSidebar();
+        _leftSplitter = BuildVerticalSplitter(_leftSidebar, 276, 230, 420);
 
-        var center = Panel("#1d1d1d", "column", "auto", "100%");
+        var center = Panel("", "column", "auto", "100%");
         center.Style.Set("flex", "1");
         center.Style.Set("min-width", "0");
         center.Style.Set("gap", "0");
         center.Children.Add(BuildSessionTabs());
         center.Children.Add(BuildTerminalToolbar());
-        _terminal = new TerminalView(100, 30, 5000);
-        _terminal.Style.Set("flex", "1");
-        _terminal.Style.Set("width", "100%");
-        _terminal.Style.Set("min-height", "300px");
-        _terminal.Style.Set("font-family", "Cascadia Mono, Consolas, monospace");
-        _terminal.Style.Set("font-size", "15px");
-        _terminal.Style.Set("border", "0");
-        _terminal.Feed("\x1b[1;36mTermSquared Windows x64 MVP\x1b[0m\r\n");
-        _terminal.Feed("Select an SSH alias to connect. Unknown host keys are never accepted automatically.\r\n\r\n");
-        _terminal.Input += (_, input) => _ = WriteTerminalInputAsync(input.Data);
-        center.Children.Add(_terminal);
+        _sessionContentHost = Panel("", "column", "100%", "auto");
+        _sessionContentHost.Style.Set("flex", "1");
+        _sessionContentHost.Style.Set("min-height", "260px");
+        _sessionContentHost.Style.Set("gap", "0");
+        _sessionContentHost.Children.Add(BuildEmptyState(
+            "打开一个远程会话",
+            "双击左侧连接或选择后点击连接。每个会话都有独立终端、命令草稿和 SFTP 状态。"));
+        center.Children.Add(_sessionContentHost);
         center.Children.Add(BuildBottomPanel());
 
-        var right = Panel("#1b1b1b", "column", "310px", "100%");
-        right.Style.Set("min-width", "270px");
-        right.Style.Set("border-left", "1px solid #343434");
-        right.Style.Set("gap", "0");
-        right.Children.Add(PanelHeader("■  文件管理器", "⚙   ×"));
-        var pathBar = Panel("#1b1b1b", "row", "100%", "38px");
-        pathBar.Style.Set("padding", "4px 8px");
-        pathBar.Style.Set("align-items", "center");
-        pathBar.Children.Add(Caption("/", "#e5e7eb", "30px", "5px 8px"));
-        pathBar.Children.Add(ActionButton("↑", () => _ = ListRootAsync(), compact: true));
-        pathBar.Children.Add(ActionButton("↻", () => _ = ListRootAsync(), compact: true));
-        right.Children.Add(pathBar);
-        right.Children.Add(Caption("名称", "#9ca3af", "32px", "7px 12px"));
-        var files = new ScrollViewer();
-        files.Style.Set("flex", "1");
-        files.Style.Set("min-height", "0");
-        _details = Caption("Select a connection.", "#c6d0df");
-        _fileResults = Caption("连接 SSH 后刷新远程目录。", "#8c96a8", "auto", "8px 12px");
-        files.Children.Add(_fileResults);
-        right.Children.Add(files);
-        right.Children.Add(Caption("会话与安全", "#9ca3af", "32px", "7px 12px"));
-        right.Children.Add(_details);
-        _trustOnceButton = ActionButton("Trust once & connect", () => _ = ConnectPendingAsync(HostKeyDecision.TrustOnce));
-        _trustStoreButton = ActionButton("Trust and store", () => _ = ConnectPendingAsync(HostKeyDecision.TrustAndStore));
-        SetTrustButtons(false);
-        right.Children.Add(_trustOnceButton);
-        right.Children.Add(_trustStoreButton);
+        _rightSidebar = BuildInspectorSidebar();
+        _rightSplitter = BuildVerticalSplitter(_rightSidebar, 332, 286, 460, reversed: true);
 
-        var tools = Panel("#1b1b1b", "column", "100%", "auto");
-        tools.Style.Set("padding", "8px 10px");
-        tools.Children.Add(Caption("远程工具", "#9ca3af"));
-        tools.Children.Add(ActionButton("VNC 10.10.0.4", () => _ = ProbeVncAsync()));
-        tools.Children.Add(Caption("FTP / FTPS Provider 可用", "#fbbf24"));
-        _rdpHost = RdpInput("Host", "");
-        _rdpUsername = RdpInput("User", "");
-        _rdpPort = RdpInput("Port", "3389", "number");
-        tools.Children.Add(_rdpHost);
-        tools.Children.Add(_rdpUsername);
-        tools.Children.Add(_rdpPort);
-        tools.Children.Add(ActionButton("启动 Windows RDP", LaunchRdp));
-        right.Children.Add(tools);
-
-        body.Children.Add(left);
+        body.Children.Add(_leftSidebar);
+        body.Children.Add(_leftSplitter);
         body.Children.Add(center);
-        body.Children.Add(right);
+        body.Children.Add(_rightSplitter);
+        body.Children.Add(_rightSidebar);
         root.Children.Add(body);
         root.Children.Add(BuildStatusBar());
+        RenderActiveSession();
+        if (_window is not null) ApplyResponsiveLayout(_window.ClientSize);
         return root;
     }
 
-    private static MenuBar BuildMenuBar()
+    private View BuildTopBar()
+    {
+        var top = Panel("", "row", "100%", "44px");
+        top.ClassList.Add("top-bar");
+        top.Style.Set("align-items", "center");
+        top.Style.Set("gap", "8px");
+
+        top.Children.Add(BuildMenuBar());
+        var spacer = Panel("", "row", "auto", "1px");
+        spacer.Style.Set("flex", "1");
+        top.Children.Add(spacer);
+
+        var broker = Caption("MCP  LOCAL", "#7ee2ae", "28px", "6px 11px");
+        broker.ClassList.Add("status-chip");
+        broker.Tooltip = "仅当前用户可访问的本地 MCP Broker 正在运行";
+        top.Children.Add(broker);
+        return top;
+    }
+
+    private MenuBar BuildMenuBar()
     {
         var menuBar = new MenuBar();
-        menuBar.Style.Set("height", "42px");
-        menuBar.Style.Set("background", "#181818");
-        menuBar.Style.Set("border-bottom", "1px solid #343434");
-        foreach (var title in new[] { "会话", "编辑", "搜索", "选择", "转到", "查看", "模式", "工具", "窗口", "帮助" })
-        {
-            var item = new MenuItem { TextContent = title };
-            item.Style.Set("color", "#d1d5db");
-            item.Children.Add(new Menu
-            {
-                Children =
-                {
-                    new MenuItem { TextContent = title == "会话" ? "新建连接" : $"{title}选项" },
-                    new MenuSeparator(),
-                    new MenuItem { TextContent = "TermSquared" }
-                }
-            });
-            menuBar.Children.Add(item);
-        }
+        menuBar.ClassList.Add("top-menu");
+        menuBar.Style.Set("width", "280px");
+        menuBar.Style.Set("height", "32px");
+
+        menuBar.Children.Add(MenuGroup("会话",
+            MenuCommand("连接所选会话", RequestConnect),
+            MenuCommand("断开当前会话", RequestDisconnect),
+            new MenuSeparator(),
+            MenuCommand("退出", () => _window?.Close())));
+        menuBar.Children.Add(MenuGroup("视图",
+            MenuCommand("连接侧栏", ToggleLeftSidebar),
+            MenuCommand("检查器侧栏", ToggleRightSidebar),
+            MenuCommand("快速发送面板", () => TogglePanel(_bottomPanel))));
+        menuBar.Children.Add(MenuGroup("工具",
+            MenuCommand("刷新远程目录", () => _ = RefreshSftpAsync()),
+            MenuCommand("恢复已移除连接", RestoreHiddenConnections),
+            MenuCommand("检测所选主机 VNC", () => _ = ProbeVncAsync()),
+            MenuCommand("启动所选主机 RDP", LaunchRdp)));
+        menuBar.Children.Add(MenuGroup("帮助",
+            MenuCommand("关于 TermSquared", () => _ = SetStatusAsync(
+                "TermSquared - 安全优先的远程连接工作台", "#a8c7ff"))));
         return menuBar;
+    }
+
+    private View BuildConnectionSidebar()
+    {
+        var sidebar = Panel("", "column", "276px", "100%");
+        sidebar.ClassList.Add("sidebar");
+        sidebar.ClassList.Add("sidebar-left");
+        sidebar.Style.Set("gap", "0");
+        sidebar.Children.Add(PanelHeader(FluentGlyphs.Connect, "连接", "SSH 配置"));
+
+        var filterArea = Panel("", "column", "100%", "56px");
+        filterArea.Style.Set("padding", "10px 12px");
+        filterArea.Style.Set("gap", "0");
+        _connectionFilter = RdpInput("按名称、主机或用户筛选", "");
+        _connectionFilter.Tooltip = $"配置来源: {_configPath}";
+        _connectionFilter.AddEventListener(StandardEvents.Input, ApplyConnectionFilter);
+        filterArea.Children.Add(_connectionFilter);
+        sidebar.Children.Add(filterArea);
+
+        var treeToolbar = Panel("", "row", "100%", "34px");
+        treeToolbar.ClassList.Add("tree-toolbar");
+        treeToolbar.Style.Set("padding", "2px 10px");
+        treeToolbar.Style.Set("gap", "6px");
+        treeToolbar.Children.Add(TreeActionButton("新增", () => _ = CreateConnectionAsync()));
+        treeToolbar.Children.Add(TreeActionButton("编辑", () => _ = EditSelectedConnectionAsync()));
+        treeToolbar.Children.Add(IconButton(FluentGlyphs.NewFolder, "新建连接文件夹", () => _ = CreateConnectionFolderAsync()));
+        treeToolbar.Children.Add(IconButton(FluentGlyphs.More, "所选项菜单", OpenSelectedConnectionMenu));
+        sidebar.Children.Add(treeToolbar);
+
+        _connectionTree = new Tree();
+        _connectionTree.ClassList.Add("connection-tree");
+        _connectionTree.Style.Set("flex", "1");
+        _connectionTree.Style.Set("min-height", "0");
+        _connectionTree.Style.Set("padding", "4px 8px 12px 8px");
+        _connectionTree.AddEventListener(StandardEvents.SelectionChange, SelectConnectionTreeItem);
+        _connectionTree.AddEventListener<PointerEvent>(StandardEvents.ContextMenu, OpenConnectionContextMenu);
+        _connectionTree.AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
+        {
+            if (e.KeyCode == 13 && _connectionTree.SelectedItem is ConnectionProfileTreeItem profileItem)
+            {
+                e.PreventDefault();
+                _ = OpenSessionAsync(profileItem.Profile);
+            }
+            else if (e.KeyCode == 93 || e.ShiftKey && e.KeyCode == 121)
+            {
+                e.PreventDefault();
+                OpenSelectedConnectionMenu();
+            }
+        });
+        sidebar.Children.Add(_connectionTree);
+        _connectionEmptyState = Caption("", "#718096");
+        _connectionEmptyState.Style.Set("padding", "14px");
+        sidebar.Children.Add(_connectionEmptyState);
+        RebuildConnectionTree();
+        return sidebar;
     }
 
     private View BuildSessionTabs()
     {
-        var tabs = Panel("#202020", "row", "100%", "42px");
-        tabs.Style.Set("border-bottom", "1px solid #343434");
-        tabs.Style.Set("gap", "1px");
-        var index = 1;
-        foreach (var profile in _configuration.Profiles.Take(5))
-        {
-            var label = $"■  {index}. {profile.Name}   ×";
-            tabs.Children.Add(TabButton(label, () => _ = SelectAndConnectAsync(profile, HostKeyDecision.Reject)));
-            index++;
-        }
-        _activeTabText = Caption("未连接", "#9ca3af", "40px", "10px 14px");
-        tabs.Children.Add(_activeTabText);
+        var tabs = Panel("", "row", "100%", "42px");
+        tabs.ClassList.Add("session-tabs");
+        tabs.Style.Set("padding", "4px 8px 0 8px");
+        tabs.Style.Set("align-items", "flex-end");
+        tabs.Style.Set("gap", "6px");
+
+        _sessionTabsHost = Panel("", "row", "auto", "38px");
+        _sessionTabsHost.Style.Set("gap", "4px");
+        tabs.Children.Add(_sessionTabsHost);
+        var status = Panel("", "row", "auto", "38px");
+        status.Style.Set("flex", "1");
+        status.Style.Set("align-items", "center");
+        status.Style.Set("gap", "7px");
+        _sessionTabStatusIcon = FluentIcon(FluentGlyphs.Connect, "#718096", 14);
+        status.Children.Add(_sessionTabStatusIcon);
+        _sessionTabStatus = Caption("选择左侧连接后建立会话", "#718096");
+        _sessionTabStatus.Style.Set("flex", "1");
+        status.Children.Add(_sessionTabStatus);
+        tabs.Children.Add(status);
         return tabs;
     }
 
     private View BuildTerminalToolbar()
     {
-        var toolbar = Panel("#202020", "row", "100%", "42px");
-        toolbar.Style.Set("padding", "5px 8px");
+        var toolbar = Panel("", "row", "100%", "48px");
+        toolbar.ClassList.Add("workspace-toolbar");
+        toolbar.Style.Set("padding", "7px 10px");
         toolbar.Style.Set("align-items", "center");
-        toolbar.Style.Set("border-bottom", "1px solid #343434");
-        toolbar.Children.Add(ActionButton("＋", () => { }, compact: true));
-        toolbar.Children.Add(ActionButton("▶", () =>
-        {
-            if (_selectedProfile is not null) _ = ConnectAsync(_selectedProfile, HostKeyDecision.Reject);
-        }, compact: true));
-        toolbar.Children.Add(ActionButton("■", () => _ = DisconnectAsync(), compact: true));
-        toolbar.Children.Add(Caption("ssh   ›   个人   ›   当前会话", "#d1d5db", "32px", "7px 12px"));
-        toolbar.Children.Add(ActionButton("刷新 SFTP", () => _ = ListRootAsync(), compact: true));
+        toolbar.Style.Set("gap", "8px");
+        _connectButton = IconButton(FluentGlyphs.Connect, "连接", RequestConnect, "button-primary");
+        _connectButton.Tooltip = "连接或重新连接当前选择的 SSH 配置";
+        _disconnectButton = IconButton(FluentGlyphs.Disconnect, "断开", RequestDisconnect, "button-danger");
+        _disconnectButton.Tooltip = "安全关闭当前终端和 SFTP 会话";
+        _refreshFilesButton = IconButton(FluentGlyphs.Refresh, "刷新文件", () => _ = RefreshSftpAsync());
+        _refreshFilesButton.Tooltip = "读取远程根目录";
+        toolbar.Children.Add(_connectButton);
+        toolbar.Children.Add(_disconnectButton);
+        toolbar.Children.Add(_refreshFilesButton);
+        _protocolToolsHost = Panel("", "row", "auto", "30px");
+        _protocolToolsHost.Style.Set("gap", "6px");
+        toolbar.Children.Add(_protocolToolsHost);
+        var hint = Caption("终端输入会直接发送到活动 SSH Shell", "#8290a3");
+        hint.Style.Set("flex", "1");
+        toolbar.Children.Add(hint);
         return toolbar;
     }
 
     private View BuildBottomPanel()
     {
-        var bottom = Panel("#1a1a1a", "column", "100%", "190px");
-        bottom.Style.Set("border-top", "1px solid #343434");
-        bottom.Style.Set("gap", "0");
-        var tabs = Panel("#202020", "row", "100%", "36px");
-        tabs.Children.Add(TabButton("■ 发送", () => { }));
-        tabs.Children.Add(TabButton("■ Shell", () => { }));
-        tabs.Children.Add(TabButton("■ 传输", () => { }));
-        bottom.Children.Add(tabs);
-        var sendToolbar = Panel("#1a1a1a", "row", "100%", "42px");
-        sendToolbar.Style.Set("padding", "5px 10px");
-        sendToolbar.Style.Set("align-items", "center");
-        _sendInput = RdpInput("输入要发送到当前会话的文本", "");
-        _sendInput.Style.Set("flex", "1");
-        sendToolbar.Children.Add(_sendInput);
-        sendToolbar.Children.Add(ActionButton("发送", SendText, compact: true));
-        sendToolbar.Children.Add(Caption("文本  |  计数 1  |  间隔 1.00s  |  当前会话", "#b6beca"));
-        bottom.Children.Add(sendToolbar);
-        bottom.Children.Add(Caption("发送内容不会写入日志；密码请使用连接配置。", "#6b7280", "auto", "10px 14px"));
-        return bottom;
+        _bottomPanel = Panel("", "column", "100%", "auto");
+        _bottomPanel.ClassList.Add("bottom-panel");
+        _bottomPanel.Style.Set("gap", "0");
+        var titleRow = Panel("", "row", "100%", "38px");
+        titleRow.ClassList.Add("command-panel-header");
+        titleRow.Style.Set("padding", "4px 8px 4px 10px");
+        titleRow.Style.Set("align-items", "center");
+        titleRow.Style.Set("gap", "7px");
+        titleRow.Children.Add(FluentIcon(FluentGlyphs.CommandPrompt, "#8fb6ff", 16));
+        var title = Caption("命令编辑与发送", "#dfe7f2");
+        title.Style.Set("font-weight", "700");
+        title.Style.Set("flex", "1");
+        titleRow.Children.Add(title);
+        _sendButton = IconButton(FluentGlyphs.Send, "发送全部", SendCommands, "icon-button-primary");
+        _clearCommandsButton = IconButton(FluentGlyphs.Delete, "清空命令", () =>
+        {
+            if (_commandEditor is not null) _commandEditor.Value = "";
+        });
+        _expandCommandsButton = IconButton(FluentGlyphs.ChevronUp, "展开命令面板", ToggleCommandPanelExpanded);
+        titleRow.Children.Add(_sendButton);
+        titleRow.Children.Add(_clearCommandsButton);
+        titleRow.Children.Add(_expandCommandsButton);
+        _bottomPanel.Children.Add(titleRow);
+
+        _commandPanelBody = Panel("", "column", "100%", "150px");
+        _commandPanelBody.Style.Set("padding", "0 10px 8px 10px");
+        _commandPanelBody.Style.Set("gap", "6px");
+        _commandEditor = new CodeEditor
+        {
+            Placeholder = "输入一行或多行命令。每行将依次发送到当前 SSH Shell。",
+            Language = "plaintext",
+            ThemeId = "default-dark",
+            ShowLineNumbers = true,
+            ShowGlyphMargin = false,
+            ShowFolding = false,
+            ShowOverviewRuler = false,
+            ShowScrollBars = true,
+            WordWrap = true
+        };
+        _commandEditor.ClassList.Add("command-editor");
+        _commandEditor.Style.Set("flex", "1");
+        _commandEditor.Style.Set("min-width", "0");
+        _commandEditor.AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
+        {
+            if (e.KeyCode != 13 || !e.ControlKey) return;
+            _commandTextBeforeShortcut = _commandEditor.Value;
+            _commandShortcutSessionId = _activeSessionId;
+            e.PreventDefault();
+            SendCommands();
+        });
+        _commandEditor.AddEventListener(StandardEvents.Input, () =>
+        {
+            if (_commandTextBeforeShortcut is null) return;
+            if (_commandShortcutSessionId == _activeSessionId)
+                _commandEditor.Value = _commandTextBeforeShortcut;
+            _commandTextBeforeShortcut = null;
+            _commandShortcutSessionId = null;
+        });
+        _commandPanelBody.Children.Add(_commandEditor);
+        var footer = Panel("", "row", "100%", "18px");
+        footer.Style.Set("align-items", "center");
+        var helper = Caption("Ctrl+Enter 发送全部  |  命令内容不会写入应用日志", "#718096");
+        helper.Style.Set("flex", "1");
+        footer.Children.Add(helper);
+        _commandPanelBody.Children.Add(footer);
+        _bottomPanel.Children.Add(_commandPanelBody);
+        _bottomPanel.IsVisible = false;
+        SetCommandPanelExpanded(false);
+        return _bottomPanel;
+    }
+
+    private View BuildInspectorSidebar()
+    {
+        var sidebar = Panel("", "column", "332px", "100%");
+        sidebar.ClassList.Add("sidebar");
+        sidebar.ClassList.Add("sidebar-right");
+        sidebar.Style.Set("gap", "0");
+
+        var header = ContextPanelHeader(FluentGlyphs.History, "历史记录", "本次运行");
+        sidebar.Children.Add(header);
+
+        var content = Panel("", "column", "100%", "auto");
+        content.Style.Set("flex", "1");
+        content.Style.Set("min-height", "0");
+        content.Style.Set("gap", "0");
+
+        _historyPanel = BuildHistoryPanel();
+        _sftpPanel = BuildSftpPanel();
+        _securityPanel = BuildSecurityPanel();
+        content.Children.Add(_historyPanel);
+        content.Children.Add(_sftpPanel);
+        content.Children.Add(_securityPanel);
+        sidebar.Children.Add(content);
+        ShowHistoryContext();
+        return sidebar;
+    }
+
+    private View BuildHistoryPanel()
+    {
+        var panel = Panel("", "column", "100%", "100%");
+        panel.Style.Set("gap", "0");
+        var scroll = new ScrollViewer();
+        scroll.Style.Set("flex", "1");
+        scroll.Style.Set("min-height", "0");
+        scroll.Style.Set("padding", "12px");
+        _historyItems = Panel("", "column", "100%", "auto");
+        _historyItems.Style.Set("gap", "8px");
+        _historyItems.Children.Add(BuildEmptyState("暂无连接历史", "连接会话后，这里会记录目标和连接结果。"));
+        scroll.Children.Add(_historyItems);
+        panel.Children.Add(scroll);
+        return panel;
+    }
+
+    private View BuildSftpPanel()
+    {
+        var panel = Panel("", "column", "100%", "100%");
+        panel.Style.Set("gap", "0");
+        var pathBar = Panel("", "row", "100%", "44px");
+        pathBar.ClassList.Add("sftp-path-bar");
+        pathBar.Style.Set("padding", "6px 8px 6px 12px");
+        pathBar.Style.Set("align-items", "center");
+        _sftpPathText = Caption("/", "#dfe7f2");
+        _sftpPathText.Style.Set("flex", "1");
+        pathBar.Children.Add(_sftpPathText);
+        pathBar.Children.Add(IconButton(FluentGlyphs.NewFolder, "新建远程目录", () => _ = CreateRemoteDirectoryAsync()));
+        pathBar.Children.Add(IconButton(FluentGlyphs.Upload, "上传本地文件", () => _ = UploadRemoteFileAsync()));
+        pathBar.Children.Add(IconButton(FluentGlyphs.More, "所选文件菜单", OpenSelectedSftpMenu));
+        pathBar.Children.Add(IconButton(FluentGlyphs.Refresh, "刷新 SFTP", () => _ = RefreshSftpAsync()));
+        panel.Children.Add(pathBar);
+        _sftpTree = new Tree();
+        _sftpTree.ClassList.Add("sftp-tree");
+        _sftpTree.Style.Set("flex", "1");
+        _sftpTree.Style.Set("min-height", "0");
+        _sftpTree.Style.Set("padding", "6px 8px 12px 8px");
+        _sftpTree.AddEventListener(StandardEvents.SelectionChange, SelectSftpTreeItem);
+        _sftpTree.AddEventListener("expand", e =>
+        {
+            if (e.Target is SftpTreeItem item) _ = EnsureSftpChildrenAsync(item);
+        });
+        _sftpTree.AddEventListener<PointerEvent>(StandardEvents.ContextMenu, OpenSftpContextMenu);
+        _sftpTree.AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
+        {
+            if (e.KeyCode == 93 || e.ShiftKey && e.KeyCode == 121)
+            {
+                e.PreventDefault();
+                OpenSelectedSftpMenu();
+            }
+        });
+        panel.Children.Add(_sftpTree);
+        return panel;
     }
 
     private View BuildStatusBar()
     {
-        var status = Panel("#161616", "row", "100%", "34px");
-        status.Style.Set("border-top", "1px solid #343434");
-        status.Style.Set("padding", "7px 14px");
+        var status = Panel("", "row", "100%", "30px");
+        status.ClassList.Add("status-bar");
+        status.Style.Set("padding", "6px 12px");
         status.Style.Set("align-items", "center");
-        _sessionStatus = Caption("就绪", "#c7ccd4");
+        _sessionStatus = Caption("就绪 - 请选择连接", "#9aa7b8");
         _sessionStatus.Style.Set("flex", "1");
         status.Children.Add(_sessionStatus);
-        status.Children.Add(Caption("远程模式   UTF-8   cmd   MCP ●   🔒 安全", "#aab2bf"));
+        status.Children.Add(Caption("UTF-8   |   MCP 本地代理   |   严格主机密钥", "#718096"));
         return status;
     }
 
-    private static View PanelHeader(string title, string actions)
+    private View BuildSecurityPanel()
     {
-        var header = Panel("#202020", "row", "100%", "40px");
-        header.Style.Set("padding", "9px 12px");
-        header.Style.Set("border-bottom", "1px solid #343434");
-        var label = Caption(title, "#d1d5db");
+        var panel = Panel("", "column", "100%", "100%");
+        panel.Style.Set("padding", "12px");
+        panel.Style.Set("gap", "10px");
+        _details = Caption("选择连接后，这里会显示目标地址与主机密钥状态。", "#9aa7b8");
+        _details.Style.Set("white-space", "pre-wrap");
+        panel.Children.Add(_details);
+
+        _hostKeyApproval = Panel("", "column", "100%", "auto");
+        _hostKeyApproval.ClassList.Add("warning-surface");
+        _hostKeyApproval.Style.Set("padding", "12px");
+        _hostKeyApproval.Style.Set("gap", "9px");
+        var warning = Caption("需要确认未知主机密钥", "#f6c66b");
+        warning.Style.Set("font-weight", "700");
+        _hostKeyApproval.Children.Add(warning);
+        _trustOnceButton = ActionButton("仅本次信任并连接", () => _ = ConnectPendingAsync(HostKeyDecision.TrustOnce));
+        _trustStoreButton = ActionButton("信任并保存此密钥", () => _ = ConnectPendingAsync(HostKeyDecision.TrustAndStore), className: "button-primary");
+        _hostKeyApproval.Children.Add(_trustOnceButton);
+        _hostKeyApproval.Children.Add(_trustStoreButton);
+        panel.Children.Add(_hostKeyApproval);
+        SetTrustButtons(false);
+        return panel;
+    }
+
+    private static View PanelHeader(string glyph, string title, string subtitle)
+    {
+        var header = Panel("", "row", "100%", "48px");
+        header.ClassList.Add("panel-header");
+        header.Style.Set("padding", "8px 12px");
+        header.Style.Set("align-items", "center");
+        header.Style.Set("gap", "8px");
+        header.Children.Add(FluentIcon(glyph, "#8fb6ff", 16));
+        var label = Caption(title, "#e7edf5");
+        label.ClassList.Add("panel-title");
+        label.Style.Set("font-size", "14px");
         label.Style.Set("flex", "1");
         header.Children.Add(label);
-        header.Children.Add(Caption(actions, "#9ca3af"));
+        header.Children.Add(Caption(subtitle, "#718096"));
         return header;
     }
 
-    private Button ResourceButton(ConnectionProfile profile)
+    private View ContextPanelHeader(string glyph, string title, string subtitle)
     {
-        var color = profile.Name.GetHashCode(StringComparison.Ordinal) % 2 == 0 ? "#38bdf8" : "#fb7185";
-        var button = ActionButton($"■  {profile.Name}", () => _ = SelectAndConnectAsync(profile, HostKeyDecision.Reject));
-        button.Style.Set("height", "38px");
-        button.Style.Set("text-align", "left");
-        button.Style.Set("background", "#1b1b1b");
-        button.Style.Set("color", color);
-        button.Style.Set("border", "0");
-        return button;
+        var header = Panel("", "row", "100%", "48px");
+        header.ClassList.Add("panel-header");
+        header.Style.Set("padding", "8px 12px");
+        header.Style.Set("align-items", "center");
+        header.Style.Set("gap", "8px");
+        _rightPanelIcon = FluentIcon(glyph, "#8fb6ff", 16);
+        header.Children.Add(_rightPanelIcon);
+        _rightPanelTitle = Caption(title, "#e7edf5");
+        _rightPanelTitle.ClassList.Add("panel-title");
+        _rightPanelTitle.Style.Set("font-size", "14px");
+        _rightPanelTitle.Style.Set("flex", "1");
+        header.Children.Add(_rightPanelTitle);
+        _rightPanelSubtitle = Caption(subtitle, "#718096");
+        header.Children.Add(_rightPanelSubtitle);
+        return header;
     }
 
-    private static Button TabButton(string text, Action action)
+    private static View BuildEmptyState(string title, string description)
     {
-        var button = ActionButton(text, action);
-        button.Style.Set("width", "auto");
-        button.Style.Set("height", "40px");
-        button.Style.Set("background", "#292929");
-        button.Style.Set("border", "0");
-        button.Style.Set("border-right", "1px solid #373737");
-        return button;
+        var empty = Panel("", "column", "100%", "112px");
+        empty.ClassList.Add("subtle-surface");
+        empty.Style.Set("padding", "16px 14px");
+        empty.Style.Set("gap", "7px");
+        var heading = Caption(title, "#c8d2df");
+        heading.Style.Set("font-weight", "700");
+        empty.Children.Add(heading);
+        var body = Caption(description, "#718096");
+        body.Style.Set("white-space", "pre-wrap");
+        empty.Children.Add(body);
+        return empty;
     }
 
-    private void SendText()
+    private void RebuildConnectionTree()
     {
-        var text = _sendInput?.Value;
-        if (string.IsNullOrEmpty(text)) return;
-        _ = WriteTerminalInputAsync(text + "\r");
-        _sendInput!.Value = "";
+        if (_connectionTree is null) return;
+        _connectionTree.Children.Clear();
+        _connectionItems.Clear();
+        _connectionFolders.Clear();
+
+        foreach (var folder in _workspaceSettings.Folders.OrderBy(item => item.Order))
+        {
+            var item = new ConnectionFolderTreeItem(folder) { IsExpanded = true };
+            item.ClassList.Add("connection-folder");
+            _connectionFolders[folder.Id] = item;
+        }
+        foreach (var folder in _workspaceSettings.Folders.OrderBy(item => item.Order))
+        {
+            var item = _connectionFolders[folder.Id];
+            if (folder.ParentId is not null && _connectionFolders.TryGetValue(folder.ParentId, out var parent))
+                parent.Children.Add(item);
+            else
+                _connectionTree.Children.Add(item);
+        }
+
+        var profilesById = _profiles.ToDictionary(profile => profile.Id.ToString("D"), StringComparer.OrdinalIgnoreCase);
+        var connections = new List<(string WorkspaceId, ConnectionProfile Profile, ConnectionItemSettings Settings)>();
+        foreach (var profile in _profiles)
+        {
+            var workspaceId = profile.Id.ToString("D");
+            var settings = _workspaceSettings.Connections.GetValueOrDefault(workspaceId) ?? new ConnectionItemSettings();
+            if (!settings.Hidden) connections.Add((workspaceId, profile, settings));
+        }
+        foreach (var entry in _workspaceSettings.Connections)
+        {
+            if (profilesById.ContainsKey(entry.Key) || entry.Value.Hidden ||
+                entry.Value.SourceProfileId is null || !profilesById.TryGetValue(entry.Value.SourceProfileId, out var source))
+                continue;
+            connections.Add((entry.Key, source, entry.Value));
+        }
+
+        foreach (var entry in connections.OrderBy(item => item.Settings.Order).ThenBy(item => item.Profile.Name))
+        {
+            var displayName = _workspaceSettings.GetDisplayName(entry.WorkspaceId, entry.Profile.Name);
+            var item = new ConnectionProfileTreeItem(entry.WorkspaceId, entry.Profile, displayName);
+            item.ClassList.Add("connection-item");
+            item.Tooltip = $"{entry.Profile.Protocol.ToString().ToUpperInvariant()}  {entry.Profile.Username}@{entry.Profile.Host}:{entry.Profile.Port}";
+            item.AddEventListener(StandardEvents.Click, e =>
+            {
+                if (e.TimeStamp - item.LastClickTime <= 500)
+                {
+                    item.LastClickTime = 0;
+                    _ = OpenSessionAsync(item.Profile, displayName: item.TextContent, forceNew: true);
+                }
+                else item.LastClickTime = e.TimeStamp;
+            });
+            _connectionItems[entry.WorkspaceId] = item;
+            if (entry.Settings.FolderId is not null && _connectionFolders.TryGetValue(entry.Settings.FolderId, out var folder))
+                folder.Children.Add(item);
+            else
+                _connectionTree.Children.Add(item);
+        }
+        ApplyConnectionFilter();
     }
 
-    private async Task SelectAndConnectAsync(ConnectionProfile profile, HostKeyDecision decision)
+    private void SelectConnectionTreeItem()
     {
-        _selectedProfile = profile;
-        if (_activeTabText is not null) _activeTabText.TextContent = $"当前: {profile.Name}";
-        if (_rdpHost is not null) _rdpHost.Value = profile.Host;
-        if (_rdpUsername is not null) _rdpUsername.Value = profile.Username ?? "";
-        _pendingHostKey = null;
-        SetTrustButtons(false);
-        await ConnectAsync(profile, decision).ConfigureAwait(false);
+        if (_connectionTree?.SelectedItem is not ConnectionProfileTreeItem item) return;
+        _selectedProfile = item.Profile;
+        SetText(_details,
+            $"目标: {item.Profile.Username}@{item.Profile.Host}:{item.Profile.Port}\n协议: {item.Profile.Protocol}\n双击打开新会话。",
+            "#c6d0df");
+        if (ActiveSession is null) RenderActiveSession();
+    }
+
+    private async Task CreateConnectionFolderAsync()
+    {
+        if (_root is null) return;
+        var name = await WorkspaceDialogs.PromptAsync(_root, "新建连接文件夹", placeholder: "文件夹名称");
+        if (string.IsNullOrWhiteSpace(name)) return;
+        var parentId = (_connectionTree?.SelectedItem as ConnectionFolderTreeItem)?.Settings.Id;
+        _workspaceSettings.AddFolder(name, parentId);
+        RebuildConnectionTree();
+    }
+
+    private async Task CreateConnectionAsync()
+    {
+        if (_root is null) return;
+        var value = await WorkspaceDialogs.EditConnectionAsync(_root);
+        if (value is null) return;
+        try
+        {
+            var profile = await _connectionProfiles.CreateAsync(value, _secrets, _lifetime.Token).ConfigureAwait(false);
+            await RefreshConnectionCatalogAsync(profile.Id).ConfigureAwait(false);
+            await SetStatusAsync($"已新增连接 {profile.Name}", "#7ee2ae").ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            await SetStatusAsync($"新增连接失败: {SafeError(exception)}", "#ff9baa").ConfigureAwait(false);
+        }
+    }
+
+    private async Task EditSelectedConnectionAsync()
+    {
+        if (_root is null || _connectionTree?.SelectedItem is not ConnectionProfileTreeItem selected)
+        {
+            await SetStatusAsync("请先选择要编辑的连接", "#f6c66b").ConfigureAwait(false);
+            return;
+        }
+        var current = selected.Profile;
+        var value = await WorkspaceDialogs.EditConnectionAsync(_root, current);
+        if (value is null) return;
+        var endpointChanged = !string.Equals(current.Host, value.Host, StringComparison.OrdinalIgnoreCase) ||
+                              current.Port != value.Port ||
+                              !string.Equals(current.Username, value.Username, StringComparison.Ordinal);
+        if (endpointChanged && string.IsNullOrWhiteSpace(value.Password))
+        {
+            await SetStatusAsync("修改主机、端口或用户名时必须重新输入密码", "#f6c66b").ConfigureAwait(false);
+            return;
+        }
+
+        var sessions = _sessions.Values.Where(session => session.Profile.Id == current.Id).ToArray();
+        if (sessions.Length > 0 && !await WorkspaceDialogs.ConfirmAsync(
+                _root,
+                "编辑连接",
+                $"保存“{current.Name}”前将关闭其 {sessions.Length} 个已打开会话。是否继续？"))
+            return;
+        foreach (var session in sessions) await CloseSessionAsync(session).ConfigureAwait(false);
+
+        try
+        {
+            var profile = await _connectionProfiles.UpdateAsync(
+                current, value, _configuration.Profiles, _secrets, _lifetime.Token).ConfigureAwait(false);
+            await RefreshConnectionCatalogAsync(profile.Id, selected.WorkspaceId).ConfigureAwait(false);
+            await SetStatusAsync($"已更新连接 {profile.Name}", "#7ee2ae").ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            await SetStatusAsync($"保存连接失败: {SafeError(exception)}", "#ff9baa").ConfigureAwait(false);
+        }
+    }
+
+    private async Task RefreshConnectionCatalogAsync(Guid selectedProfileId, string? workspaceId = null)
+    {
+        _profiles = _connectionProfiles.Merge(_configuration.Profiles);
+        _workspaceSettings.EnsureConnections(_profiles.Select(profile => profile.Id).ToArray());
+        await _remoteOperations.ReplaceProfilesAsync(_profiles, _lifetime.Token).ConfigureAwait(false);
+        await InvokeUiAsync(() =>
+        {
+            RebuildConnectionTree();
+            var key = workspaceId ?? selectedProfileId.ToString("D");
+            if (_connectionItems.TryGetValue(key, out var item)) _connectionTree?.SelectItem(item);
+            _selectedProfile = _profiles.FirstOrDefault(profile => profile.Id == selectedProfileId);
+            RenderActiveSession();
+        }).ConfigureAwait(false);
+    }
+
+    private async Task RenameSelectedConnectionNodeAsync()
+    {
+        if (_root is null || _connectionTree?.SelectedItem is not { } selected) return;
+        var name = await WorkspaceDialogs.PromptAsync(_root, "重命名", selected.TextContent, "显示名称");
+        if (string.IsNullOrWhiteSpace(name)) return;
+        switch (selected)
+        {
+            case ConnectionFolderTreeItem folder:
+                _workspaceSettings.RenameFolder(folder.Settings.Id, name);
+                break;
+            case ConnectionProfileTreeItem profile:
+                _workspaceSettings.RenameConnection(profile.WorkspaceId, name);
+                break;
+        }
+        RebuildConnectionTree();
+    }
+
+    private void OpenConnectionContextMenu(PointerEvent e)
+    {
+        if (_connectionTree is null) return;
+        if (FindAncestor<ConnectionProfileTreeItem>(e.Target as Element) is { } profile) _connectionTree.SelectItem(profile);
+        else if (FindAncestor<ConnectionFolderTreeItem>(e.Target as Element) is { } folder) _connectionTree.SelectItem(folder);
+        OpenSelectedConnectionMenu(new Point(e.ClientX, e.ClientY));
+        e.PreventDefault();
+    }
+
+    private void OpenSelectedConnectionMenu() => OpenSelectedConnectionMenu(null);
+
+    private void OpenSelectedConnectionMenu(Point? position)
+    {
+        if (_root is null || _connectionTree?.SelectedItem is not { } selected) return;
+        var menu = new ContextMenu();
+        menu.ClassList.Add("context-menu");
+        if (selected is ConnectionProfileTreeItem profile)
+        {
+            menu.Children.Add(MenuCommand("打开新会话", () => _ = OpenSessionAsync(profile.Profile, displayName: profile.TextContent, forceNew: true)));
+            menu.Children.Add(MenuCommand("编辑连接信息", () => _ = EditSelectedConnectionAsync()));
+            menu.Children.Add(MenuCommand("重命名显示名称", () => _ = RenameSelectedConnectionNodeAsync()));
+            menu.Children.Add(MenuCommand("复制连接快捷方式", () => DuplicateConnectionItem(profile)));
+            menu.Children.Add(BuildMoveConnectionMenu(profile));
+            menu.Children.Add(new MenuSeparator());
+            menu.Children.Add(MenuCommand("上移", () => MoveConnectionItem(profile, -1)));
+            menu.Children.Add(MenuCommand("下移", () => MoveConnectionItem(profile, 1)));
+            menu.Children.Add(MenuCommand("从工作区移除", () => _ = RemoveConnectionItemAsync(profile)));
+        }
+        else if (selected is ConnectionFolderTreeItem folder)
+        {
+            menu.Children.Add(MenuCommand("在此新建文件夹", () => _ = CreateConnectionFolderAsync()));
+            menu.Children.Add(MenuCommand("重命名文件夹", () => _ = RenameSelectedConnectionNodeAsync()));
+            menu.Children.Add(MenuCommand("删除文件夹", () => _ = DeleteConnectionFolderAsync(folder)));
+        }
+        OpenContextMenu(menu, position ?? MenuPointFor(selected));
+    }
+
+    private MenuItem BuildMoveConnectionMenu(ConnectionProfileTreeItem item)
+    {
+        var root = new MenuItem { TextContent = "移动到文件夹" };
+        var submenu = new Menu();
+        submenu.Children.Add(MenuCommand("工作区根目录", () => MoveConnectionTo(item, null)));
+        foreach (var folder in _workspaceSettings.Folders.OrderBy(folder => folder.Name))
+            submenu.Children.Add(MenuCommand(folder.Name, () => MoveConnectionTo(item, folder.Id)));
+        root.Children.Add(submenu);
+        return root;
+    }
+
+    private void DuplicateConnectionItem(ConnectionProfileTreeItem item)
+    {
+        var settings = _workspaceSettings.Connections.GetValueOrDefault(item.WorkspaceId);
+        _workspaceSettings.DuplicateConnection(item.Profile.Id, item.TextContent + " 副本", settings?.FolderId);
+        RebuildConnectionTree();
+    }
+
+    private void MoveConnectionItem(ConnectionProfileTreeItem item, int delta)
+    {
+        _workspaceSettings.MoveConnectionBy(item.WorkspaceId, delta);
+        RebuildConnectionTree();
+    }
+
+    private void MoveConnectionTo(ConnectionProfileTreeItem item, string? folderId)
+    {
+        _workspaceSettings.MoveConnection(item.WorkspaceId, folderId);
+        RebuildConnectionTree();
+    }
+
+    private async Task RemoveConnectionItemAsync(ConnectionProfileTreeItem item)
+    {
+        if (_root is null || !await WorkspaceDialogs.ConfirmAsync(_root, "移除连接", $"从 TermSquared 工作区移除“{item.TextContent}”？\n原始 SSH 配置不会被删除。")) return;
+        _workspaceSettings.HideConnection(item.WorkspaceId);
+        RebuildConnectionTree();
+    }
+
+    private async Task DeleteConnectionFolderAsync(ConnectionFolderTreeItem folder)
+    {
+        if (_root is null || !await WorkspaceDialogs.ConfirmAsync(_root, "删除文件夹", $"删除“{folder.TextContent}”及其子文件夹？\n其中连接将移回工作区根目录。")) return;
+        _workspaceSettings.DeleteFolder(folder.Settings.Id);
+        RebuildConnectionTree();
+    }
+
+    private void OpenContextMenu(ContextMenu menu, Point position)
+    {
+        if (_root is null) return;
+        menu.AddEventListener("close", () =>
+        {
+            if (menu.ParentNode is Element parent) parent.Children.Remove(menu);
+        }, new AddEventListenerOptions { Once = true });
+        _root.Children.Add(menu);
+        menu.OpenAt(position);
+    }
+
+    private static Point MenuPointFor(Element element)
+    {
+        var point = new Point(element.Geometry.X + 20, element.Geometry.Y + 26);
+        for (var parent = element.Parent; parent is not null; parent = parent.Parent)
+        {
+            if (parent is not ScrollViewer scroll) continue;
+            point = new Point(point.X - scroll.HorizontalOffset, point.Y - scroll.VerticalOffset);
+        }
+        return point;
+    }
+
+    private static T? FindAncestor<T>(Element? element) where T : Element
+    {
+        for (var current = element; current is not null; current = current.Parent)
+            if (current is T typed) return typed;
+        return null;
+    }
+
+    private static Splitter BuildVerticalSplitter(View panel, float value, float minimum, float maximum, bool reversed = false)
+    {
+        var splitter = new Splitter
+        {
+            Value = value,
+            Minimum = minimum,
+            Maximum = maximum,
+            IsVertical = true,
+            IsReversed = reversed
+        };
+        splitter.ClassList.Add("splitter");
+        splitter.Style.Set("width", "4px");
+        splitter.AddEventListener(StandardEvents.Input, () =>
+            panel.Style.Set("width", splitter.Value.ToString("0", CultureInfo.InvariantCulture) + "px"));
+        return splitter;
+    }
+
+    private void SendCommands()
+    {
+        var text = _commandEditor?.Value;
+        if (string.IsNullOrWhiteSpace(text)) return;
+        var session = ActiveSession;
+        if (session?.Shell is null)
+        {
+            _ = SetStatusAsync("请先连接 SSH 会话再发送文本", "#f6c66b");
+            return;
+        }
+        session.CommandDraft = text;
+        var commands = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+        _ = WriteTerminalInputAsync(session, commands.Replace("\n", "\r", StringComparison.Ordinal) + "\r");
+        UpdateSessionStatus(session, "已将命令发送到当前会话", "#7ee2ae");
+    }
+
+    private void ToggleCommandPanelExpanded()
+    {
+        var session = ActiveSession;
+        if (session is null) return;
+        SetCommandPanelExpanded(!session.CommandPanelExpanded);
+    }
+
+    private void SetCommandPanelExpanded(bool expanded)
+    {
+        if (ActiveSession is { } session) session.CommandPanelExpanded = expanded;
+        if (_commandPanelBody is not null)
+            _commandPanelBody.Style.Set("height", expanded ? "270px" : "150px");
+        if (_expandCommandsButton is not null)
+        {
+            _expandCommandsButton.TextContent = expanded ? FluentGlyphs.ChevronDown : FluentGlyphs.ChevronUp;
+            _expandCommandsButton.Tooltip = expanded ? "收起命令面板" : "展开命令面板";
+        }
     }
 
     private Task ConnectPendingAsync(HostKeyDecision decision)
     {
-        var profile = _selectedProfile;
-        return profile is null ? Task.CompletedTask : ConnectAsync(profile, decision);
+        var session = ActiveSession;
+        return session?.PendingHostKey is null ? Task.CompletedTask : ConnectAsync(session, decision);
     }
 
-    private async Task ConnectAsync(ConnectionProfile profile, HostKeyDecision requestedDecision)
+    private async Task ConnectAsync(WorkspaceSession workspaceSession, HostKeyDecision requestedDecision)
     {
-        await DisconnectAsync().ConfigureAwait(false);
-        await SetStatusAsync($"Connecting to {profile.Name}...", "#fbbf24").ConfigureAwait(false);
+        await workspaceSession.LifecycleGate.WaitAsync(_lifetime.Token).ConfigureAwait(false);
+        try
+        {
+            if (workspaceSession.State == SessionState.Connecting) return;
+            await DisconnectSessionCoreAsync(workspaceSession, preparingConnection: true).ConfigureAwait(false);
+            var profile = workspaceSession.Profile;
+            var generation = ++workspaceSession.Generation;
+            var connectionLifetime = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+            workspaceSession.ConnectionLifetime = connectionLifetime;
+            workspaceSession.State = SessionState.Connecting;
+            workspaceSession.StatusText = $"正在连接 {profile.Username}@{profile.Host}:{profile.Port}";
+            workspaceSession.StatusColor = "#f6c66b";
+            await InvokeUiAsync(() => RenderSession(workspaceSession)).ConfigureAwait(false);
         HostKeyCheck? observed = null;
         SshSession? session = null;
         try
         {
             session = await SshSession.CreateFromProfileAsync(
                 profile,
-                _configuration.VolatileSecrets,
+                _secrets,
                 _knownHosts,
                 (check, _) =>
                 {
@@ -331,65 +920,111 @@ internal sealed class AppController : IDisposable
                     var decision = check.Status switch
                     {
                         HostKeyStatus.Trusted => HostKeyDecision.TrustOnce,
-                        HostKeyStatus.Unknown when _pendingHostKey?.Presented.Sha256Fingerprint == check.Presented.Sha256Fingerprint => requestedDecision,
+                        HostKeyStatus.Unknown when workspaceSession.PendingHostKey?.Presented.Sha256Fingerprint == check.Presented.Sha256Fingerprint => requestedDecision,
                         _ => HostKeyDecision.Reject
                     };
                     return Task.FromResult(decision);
                 },
-                cancellationToken: _lifetime.Token).ConfigureAwait(false);
-            await session.ConnectAsync(_lifetime.Token).ConfigureAwait(false);
+                cancellationToken: connectionLifetime.Token).ConfigureAwait(false);
+            await session.ConnectAsync(connectionLifetime.Token).ConfigureAwait(false);
             var shell = session.CreateShellSession(
-                (uint)(_terminal?.Columns ?? 100),
-                (uint)(_terminal?.Rows ?? 30));
-            lock (_sessionGate)
-            {
-                _session = session;
-                _shell = shell;
-                session = null;
-            }
-            _pendingHostKey = null;
+                (uint)workspaceSession.Terminal.Columns,
+                (uint)workspaceSession.Terminal.Rows);
+            if (workspaceSession.Generation != generation) throw new OperationCanceledException();
+            workspaceSession.Transport = session;
+            workspaceSession.Shell = shell;
+            session = null;
+            workspaceSession.PendingHostKey = null;
+            workspaceSession.PendingHostKeyPromptId = null;
+            workspaceSession.State = SessionState.Connected;
+            workspaceSession.StatusText = $"已连接 {profile.Username}@{profile.Host}:{profile.Port}";
+            workspaceSession.StatusColor = "#7ee2ae";
+            workspaceSession.DetailsText = $"目标: {profile.Username}@{profile.Host}:{profile.Port}\n主机密钥: {observed?.Presented.Algorithm}\n{observed?.Presented.Sha256Fingerprint}";
             await InvokeUiAsync(() =>
             {
-                SetTrustButtons(false);
-                _terminal?.Feed($"\r\n\x1b[32mConnected to {profile.Name}\x1b[0m\r\n");
-                SetText(_sessionStatus, $"已连接  |  {profile.Name}  |  {_terminal?.Columns}x{_terminal?.Rows}", "#86efac");
-                SetText(_details, $"{profile.Username}@{profile.Host}:{profile.Port}\nHost key: {observed?.Presented.Algorithm}\n{observed?.Presented.Sha256Fingerprint}", "#c6d0df");
+                workspaceSession.Terminal.Feed($"\r\n\x1b[32mConnected to {workspaceSession.DisplayName}\x1b[0m\r\n");
+                AddHistoryEntry(profile, "已连接", "#7ee2ae");
+                RenderSession(workspaceSession);
             }).ConfigureAwait(false);
-            _shellReader = ReadShellAsync(shell, _lifetime.Token);
+            workspaceSession.ReaderTask = ReadShellAsync(workspaceSession, shell, generation, connectionLifetime.Token);
+            await RefreshSftpAsync(workspaceSession).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception.GetType().Name == "SshAuthenticationException")
         {
-            await SetStatusAsync($"{profile.Name}: authentication failed.", "#fda4af").ConfigureAwait(false);
+            await InvokeUiAsync(() =>
+            {
+                workspaceSession.State = SessionState.Failed;
+                workspaceSession.StatusText = "认证失败，请检查连接凭据";
+                workspaceSession.StatusColor = "#ff9baa";
+                workspaceSession.DetailsText = $"{workspaceSession.DisplayName}: 认证失败。\n请检查用户名和受保护的凭据配置。";
+                AddHistoryEntry(profile, "认证失败", "#ff9baa");
+                RenderSession(workspaceSession);
+            }).ConfigureAwait(false);
         }
         catch (Exception exception) when (observed?.Status == HostKeyStatus.Unknown)
         {
-            _pendingHostKey = observed;
+            workspaceSession.PendingHostKey = observed;
+            workspaceSession.PendingHostKeyPromptId = Guid.NewGuid();
             await InvokeUiAsync(() =>
             {
-                SetTrustButtons(true);
-                SetText(_sessionStatus, "Host key approval required", "#fbbf24");
-                SetText(_details, $"Unknown host key for {profile.Name}\n{observed.Presented.Algorithm}\n{observed.Presented.Sha256Fingerprint}\nReview before trusting.", "#fbbf24");
+                workspaceSession.State = SessionState.Failed;
+                workspaceSession.StatusText = "需要确认未知主机密钥";
+                workspaceSession.StatusColor = "#f6c66b";
+                workspaceSession.DetailsText = $"{workspaceSession.DisplayName} 提供了未知主机密钥\n算法: {observed.Presented.Algorithm}\n{observed.Presented.Sha256Fingerprint}\n确认指纹无误后再继续。";
+                RenderSession(workspaceSession);
             }).ConfigureAwait(false);
             _ = exception;
         }
         catch (Exception) when (observed?.Status == HostKeyStatus.Changed)
         {
-            await SetStatusAsync($"{profile.Name}: host key changed. Connection rejected.", "#f87171").ConfigureAwait(false);
+            await InvokeUiAsync(() =>
+            {
+                workspaceSession.State = SessionState.Failed;
+                workspaceSession.StatusText = "主机密钥已变化，连接被拒绝";
+                workspaceSession.StatusColor = "#ff7f8f";
+                workspaceSession.DetailsText = $"{workspaceSession.DisplayName} 的主机密钥与已保存记录不一致。\n为防止中间人攻击，TermSquared 已拒绝连接。";
+                AddHistoryEntry(profile, "主机密钥变化，已拒绝", "#ff7f8f");
+                RenderSession(workspaceSession);
+            }).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
         }
         catch (Exception exception)
         {
-            await SetStatusAsync($"{profile.Name}: {SafeError(exception)}", "#fda4af").ConfigureAwait(false);
+            var error = SafeError(exception);
+            await InvokeUiAsync(() =>
+            {
+                workspaceSession.State = SessionState.Failed;
+                workspaceSession.StatusText = $"连接失败: {error}";
+                workspaceSession.StatusColor = "#ff9baa";
+                workspaceSession.DetailsText = $"{workspaceSession.DisplayName}: {error}";
+                AddHistoryEntry(profile, $"失败: {error}", "#ff9baa");
+                RenderSession(workspaceSession);
+            }).ConfigureAwait(false);
         }
         finally
         {
             if (session is not null) await session.DisposeAsync().ConfigureAwait(false);
         }
+        if (workspaceSession.Transport is null && ReferenceEquals(workspaceSession.ConnectionLifetime, connectionLifetime))
+        {
+            workspaceSession.ConnectionLifetime = null;
+            await connectionLifetime.CancelAsync().ConfigureAwait(false);
+            connectionLifetime.Dispose();
+        }
+        }
+        finally
+        {
+            workspaceSession.LifecycleGate.Release();
+        }
     }
 
-    private async Task ReadShellAsync(SshShellSession shell, CancellationToken cancellationToken)
+    private async Task ReadShellAsync(
+        WorkspaceSession workspaceSession,
+        SshShellSession shell,
+        long generation,
+        CancellationToken cancellationToken)
     {
         var bytes = new byte[16 * 1024];
         var chars = new char[16 * 1024];
@@ -403,7 +1038,16 @@ internal sealed class AppController : IDisposable
                 var charCount = decoder.GetChars(bytes, 0, read, chars, 0, flush: false);
                 if (charCount == 0) continue;
                 var batch = new string(chars, 0, charCount);
-                await InvokeUiAsync(() => _terminal?.Feed(batch)).ConfigureAwait(false);
+                await InvokeUiAsync(() =>
+                {
+                    if (workspaceSession.Generation == generation && ReferenceEquals(workspaceSession.Shell, shell))
+                        workspaceSession.Terminal.Feed(batch);
+                }).ConfigureAwait(false);
+            }
+            if (!cancellationToken.IsCancellationRequested && workspaceSession.Generation == generation)
+            {
+                workspaceSession.State = SessionState.Disconnected;
+                UpdateSessionStatus(workspaceSession, "远程 Shell 已断开", "#fda4af");
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -411,110 +1055,772 @@ internal sealed class AppController : IDisposable
         }
         catch (Exception exception)
         {
-            await SetStatusAsync($"Shell disconnected: {SafeError(exception)}", "#fda4af").ConfigureAwait(false);
+            if (workspaceSession.Generation == generation)
+            {
+                workspaceSession.State = SessionState.Failed;
+                UpdateSessionStatus(workspaceSession, $"Shell disconnected: {SafeError(exception)}", "#fda4af");
+            }
         }
     }
 
-    private async Task WriteTerminalInputAsync(string data)
+    private async Task WriteTerminalInputAsync(WorkspaceSession workspaceSession, string data)
     {
-        SshShellSession? shell;
-        lock (_sessionGate) shell = _shell;
+        var shell = workspaceSession.Shell;
         if (shell is null) return;
+        var entered = false;
         try
         {
-            await shell.WriteAsync(Encoding.UTF8.GetBytes(data), _lifetime.Token).ConfigureAwait(false);
+            await workspaceSession.OutboundGate.WaitAsync(
+                workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+            entered = true;
+            if (ReferenceEquals(workspaceSession.Shell, shell))
+                await shell.WriteAsync(Encoding.UTF8.GetBytes(data), workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            await SetStatusAsync($"Terminal write failed: {SafeError(exception)}", "#fda4af").ConfigureAwait(false);
+            UpdateSessionStatus(workspaceSession, $"Terminal write failed: {SafeError(exception)}", "#fda4af");
+        }
+        finally
+        {
+            if (entered) workspaceSession.OutboundGate.Release();
         }
     }
 
-    private async Task ListRootAsync()
+    private WorkspaceSession? ActiveSession =>
+        _activeSessionId is Guid id && _sessions.TryGetValue(id, out var session) ? session : null;
+
+    private async Task<WorkspaceSession?> OpenSessionAsync(
+        ConnectionProfile profile,
+        bool connect = true,
+        string? displayName = null,
+        bool forceNew = false)
     {
-        SshSession? session;
-        lock (_sessionGate) session = _session;
+        var existing = forceNew ? null : _sessions.Values.FirstOrDefault(session => session.Profile.Id == profile.Id);
+        if (existing is not null)
+        {
+            await InvokeUiAsync(() => ActivateSession(existing.Id)).ConfigureAwait(false);
+            return existing;
+        }
+
+        WorkspaceSession? created = null;
+        await InvokeUiAsync(() =>
+        {
+            var terminal = new TerminalView(100, 30, 5000);
+            terminal.ClassList.Add("terminal-frame");
+            terminal.Style.Set("flex", "1");
+            terminal.Style.Set("width", "100%");
+            terminal.Style.Set("min-height", "260px");
+            terminal.Style.Set("font-family", "Cascadia Mono, Consolas, monospace");
+            terminal.Style.Set("font-size", "15px");
+            terminal.Style.Set("border", "0");
+            var sessionName = displayName ?? _workspaceSettings.GetDisplayName(profile.Id.ToString("D"), profile.Name);
+            created = new WorkspaceSession(profile, sessionName, terminal)
+            {
+                DetailsText = $"目标: {profile.Username}@{profile.Host}:{profile.Port}\n状态: 尚未建立安全会话"
+            };
+            var session = created;
+            terminal.Feed("\x1b[1;36mTermSquared secure remote workspace\x1b[0m\r\n");
+            terminal.Feed($"Session: {sessionName}  {profile.Username}@{profile.Host}:{profile.Port}\r\n\r\n");
+            terminal.Input += (_, input) => _ = WriteTerminalInputAsync(session, input.Data);
+            terminal.GridSizeChanged += (_, size) => _ = ResizeRemoteTerminalAsync(session, size.Columns, size.Rows);
+            _sessions.Add(session.Id, session);
+            BuildSessionTab(session);
+            ActivateSession(session.Id);
+        }).ConfigureAwait(false);
+
+        if (connect && created is not null)
+            await ConnectAsync(created, HostKeyDecision.Reject).ConfigureAwait(false);
+        return created;
+    }
+
+    private void BuildSessionTab(WorkspaceSession session)
+    {
+        if (_sessionTabsHost is null) return;
+        var container = Panel("", "row", "auto", "38px");
+        container.ClassList.Add("session-tab-container");
+        container.Style.Set("gap", "0");
+        var tab = ActionButton(session.DisplayName, () => ActivateSession(session.Id), compact: true, className: "session-tab");
+        tab.Style.Set("height", "38px");
+        tab.Style.Set("min-width", "124px");
+        tab.Style.Set("border-radius", "7px 0 0 0");
+        var close = ActionButton(FluentGlyphs.Cancel, () => _ = CloseSessionAsync(session), compact: true, className: "session-tab-close");
+        close.Style.Set("width", "30px");
+        close.Style.Set("height", "38px");
+        close.Style.Set("padding", "0");
+        close.Style.Set("font-family", "'Segoe Fluent Icons', 'Segoe MDL2 Assets'");
+        close.Tooltip = "关闭会话";
+        container.Children.Add(tab);
+        container.Children.Add(close);
+        _sessionTabsHost.Children.Add(container);
+        session.TabContainer = container;
+        session.TabButton = tab;
+        UpdateSessionTab(session);
+    }
+
+    private void ActivateSession(Guid sessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session)) return;
+        if (ActiveSession is { } previous && !ReferenceEquals(previous, session))
+        {
+            if (_commandEditor is not null) previous.CommandDraft = _commandEditor.Value;
+            previous.Terminal.Unfocus();
+        }
+        _activeSessionId = sessionId;
+        if (_sessionContentHost is not null)
+        {
+            _sessionContentHost.Children.Clear();
+            _sessionContentHost.Children.Add(session.Terminal);
+        }
+        if (_commandEditor is not null) _commandEditor.Value = session.CommandDraft;
+        SetCommandPanelExpanded(session.CommandPanelExpanded);
+        RenderActiveSession();
+    }
+
+    private async Task CloseSessionAsync(WorkspaceSession session)
+    {
+        if (session.IsClosing) return;
+        session.IsClosing = true;
+        try
+        {
+            await DisconnectSessionAsync(session).ConfigureAwait(false);
+            await InvokeUiAsync(() =>
+            {
+                if (session.TabContainer?.ParentNode is Element parent) parent.Children.Remove(session.TabContainer);
+                if (session.Terminal.ParentNode is Element terminalParent) terminalParent.Children.Remove(session.Terminal);
+                _sessions.Remove(session.Id);
+                session.LifecycleGate.Dispose();
+                session.OutboundGate.Dispose();
+                if (_activeSessionId == session.Id)
+                {
+                    _activeSessionId = _sessions.Keys.LastOrDefault();
+                    if (_activeSessionId is Guid next && next != Guid.Empty) ActivateSession(next);
+                    else
+                    {
+                        _activeSessionId = null;
+                        if (_sessionContentHost is not null)
+                        {
+                            _sessionContentHost.Children.Clear();
+                            _sessionContentHost.Children.Add(BuildEmptyState("没有打开的会话", "双击左侧连接以创建新会话。"));
+                        }
+                        RenderActiveSession();
+                    }
+                }
+            }).ConfigureAwait(false);
+        }
+        catch
+        {
+            session.IsClosing = false;
+            throw;
+        }
+    }
+
+    private async Task ResizeRemoteTerminalAsync(WorkspaceSession session, int columns, int rows)
+    {
+        var shell = session.Shell;
+        if (shell is null) return;
+        var entered = false;
+        try
+        {
+            await session.OutboundGate.WaitAsync(session.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+            entered = true;
+            if (ReferenceEquals(session.Shell, shell)) shell.Resize((uint)columns, (uint)rows);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch
+        {
+        }
+        finally
+        {
+            if (entered) session.OutboundGate.Release();
+        }
+    }
+
+    private void UpdateSessionStatus(WorkspaceSession session, string status, string color)
+    {
+        _ = InvokeUiAsync(() =>
+        {
+            session.StatusText = status;
+            session.StatusColor = color;
+            RenderSession(session);
+        });
+    }
+
+    private void RenderActiveSession()
+    {
+        var session = ActiveSession;
+        var connected = session?.State == SessionState.Connected;
+        var connecting = session?.State == SessionState.Connecting;
+        if (_connectButton is not null)
+        {
+            _connectButton.TextContent = connecting ? FluentGlyphs.Sync : connected ? FluentGlyphs.Refresh : FluentGlyphs.Connect;
+            _connectButton.Tooltip = connecting ? "正在连接" : connected ? "重新连接当前会话" : "连接所选会话";
+            _connectButton.ClassList.Toggle("not-ready", session is null && _selectedProfile is null || connecting);
+        }
+        _disconnectButton?.ClassList.Toggle("not-ready", !connected && !connecting);
+        _refreshFilesButton?.ClassList.Toggle("not-ready", !connected);
+        _sendButton?.ClassList.Toggle("not-ready", !connected);
+        if (_bottomPanel is not null) _bottomPanel.IsVisible = connected;
+        if (_commandEditor is not null && session is null) _commandEditor.Value = "";
+        RenderProtocolTools(session);
         if (session is null)
         {
-            await InvokeUiAsync(() => SetText(_fileResults, "Connect SSH first.", "#fbbf24")).ConfigureAwait(false);
+            SetText(_sessionTabStatus, "选择左侧连接后建立会话", "#718096");
+            SetText(_sessionStatus, "就绪 - 请选择连接", "#9aa7b8");
+            SetTrustButtons(false);
+            ShowHistoryContext();
+            return;
+        }
+        RenderSession(session);
+    }
+
+    private void RenderSession(WorkspaceSession session)
+    {
+        UpdateSessionTab(session);
+        if (_activeSessionId != session.Id) return;
+        var connected = session.State == SessionState.Connected;
+        var connecting = session.State == SessionState.Connecting;
+        SetText(_sessionTabStatus, session.StatusText, session.StatusColor);
+        SetText(_sessionStatus,
+            connected ? $"已连接  |  {session.DisplayName}  |  {session.Terminal.Columns}x{session.Terminal.Rows}" : session.StatusText,
+            session.StatusColor);
+        if (_sessionTabStatusIcon is not null)
+        {
+            _sessionTabStatusIcon.Glyph = connected ? FluentGlyphs.CheckMark : connecting ? FluentGlyphs.Sync :
+                session.State == SessionState.Failed ? FluentGlyphs.Error : FluentGlyphs.Connect;
+            _sessionTabStatusIcon.Style.Set("color", session.StatusColor);
+        }
+        SetText(_details, session.DetailsText, session.PendingHostKey is null ? "#c6d0df" : "#f6c66b");
+        SetTrustButtons(session.PendingHostKey is not null);
+        if (session.PendingHostKey is not null) ShowSecurityContext();
+        else if (connected) ShowSftpContext(session.Profile);
+        else ShowHistoryContext();
+        if (_sftpPathText is not null) _sftpPathText.TextContent = session.CurrentRemotePath;
+        if (connected && !ReferenceEquals(session.SftpRoot?.ParentNode, _sftpTree)) RenderSftpTree(session);
+        RenderActiveSessionControls(session);
+    }
+
+    private void RenderActiveSessionControls(WorkspaceSession session)
+    {
+        var connected = session.State == SessionState.Connected;
+        var connecting = session.State == SessionState.Connecting;
+        _connectButton?.ClassList.Toggle("not-ready", connecting);
+        _disconnectButton?.ClassList.Toggle("not-ready", !connected && !connecting);
+        _refreshFilesButton?.ClassList.Toggle("not-ready", !connected);
+        _sendButton?.ClassList.Toggle("not-ready", !connected);
+        if (_bottomPanel is not null) _bottomPanel.IsVisible = connected;
+        RenderProtocolTools(session);
+    }
+
+    private void UpdateSessionTab(WorkspaceSession session)
+    {
+        if (session.TabButton is null) return;
+        session.TabButton.TextContent = session.DisplayName;
+        session.TabButton.ClassList.Toggle("active", _activeSessionId == session.Id);
+        session.TabButton.ClassList.Toggle("connected", session.State == SessionState.Connected);
+        session.TabButton.ClassList.Toggle("connecting", session.State == SessionState.Connecting);
+        session.TabButton.ClassList.Toggle("failed", session.State == SessionState.Failed);
+        session.TabButton.Tooltip = session.StatusText;
+    }
+
+    private void RenderProtocolTools(WorkspaceSession? session)
+    {
+        if (_protocolToolsHost is null) return;
+        _protocolToolsHost.Children.Clear();
+        var profile = session?.Profile ?? _selectedProfile;
+        if (profile is null) return;
+        if ((profile.Capabilities & ConnectionCapabilities.FileBrowser) != 0)
+            _protocolToolsHost.Children.Add(IconButton(FluentGlyphs.Folder, "打开 SFTP 文件", () =>
+            {
+                if (session is not null) ShowSftpContext(session.Profile);
+            }));
+        if (profile.Protocol == ConnectionProtocol.Rdp ||
+            (profile.Capabilities & ConnectionCapabilities.RemoteDesktop) != 0 && profile.Port == 3389)
+            _protocolToolsHost.Children.Add(IconButton(FluentGlyphs.Desktop, "启动 RDP", LaunchRdp));
+        if (profile.Protocol == ConnectionProtocol.Vnc)
+            _protocolToolsHost.Children.Add(IconButton(FluentGlyphs.Screen, "检测 VNC", () => _ = ProbeVncAsync()));
+    }
+
+    private Task RefreshSftpAsync() => ActiveSession is { } session
+        ? RefreshSftpAsync(session)
+        : Task.CompletedTask;
+
+    private async Task RefreshSftpAsync(WorkspaceSession workspaceSession)
+    {
+        if (workspaceSession.Transport is null)
+        {
+            UpdateSessionStatus(workspaceSession, "请先建立 SSH 连接。", "#f6c66b");
+            return;
+        }
+        var requestVersion = ++workspaceSession.SftpRequestVersion;
+        workspaceSession.CurrentRemotePath = "/";
+        workspaceSession.SelectedRemoteEntry = null;
+        SftpTreeItem? root = null;
+        await InvokeUiAsync(() =>
+        {
+            root = CreateSftpItem(workspaceSession, null, "/", "/");
+            workspaceSession.SftpRoot = root;
+            RenderSftpTree(workspaceSession);
+        }).ConfigureAwait(false);
+        if (root is null) return;
+        await EnsureSftpChildrenAsync(root, requestVersion).ConfigureAwait(false);
+        await InvokeUiAsync(() => root.Expand()).ConfigureAwait(false);
+    }
+
+    private void RenderSftpTree(WorkspaceSession workspaceSession)
+    {
+        if (_activeSessionId != workspaceSession.Id || _sftpTree is null) return;
+        _sftpTree.Children.Clear();
+        if (workspaceSession.SftpRoot is not null) _sftpTree.Children.Add(workspaceSession.SftpRoot);
+        if (_sftpPathText is not null) _sftpPathText.TextContent = workspaceSession.CurrentRemotePath;
+    }
+
+    private static SftpTreeItem CreateSftpItem(WorkspaceSession workspaceSession, RemoteEntry? entry, string path, string label)
+    {
+        var item = new SftpTreeItem(workspaceSession.Id, entry, path, label);
+        item.ClassList.Add(entry is null || entry.Kind == RemoteEntryKind.Directory ? "sftp-directory" : "sftp-file");
+        var (icon, color) = ResolveSftpIcon(entry);
+        item.LeadingIcon = icon;
+        item.LeadingIconFontFamily = "Segoe Fluent Icons";
+        item.LeadingIconColor = color;
+        if (item.IsDirectory)
+        {
+            var placeholder = new TreeItem("正在加载...") { IsEnabled = false };
+            placeholder.ClassList.Add("tree-placeholder");
+            item.Placeholder = placeholder;
+            item.Children.Add(placeholder);
+        }
+        item.Tooltip = path;
+        return item;
+    }
+
+    private static (string Glyph, Color Color) ResolveSftpIcon(RemoteEntry? entry)
+    {
+        if (entry is null || entry.Kind == RemoteEntryKind.Directory)
+            return (FluentGlyphs.Folder, Color.FromRgb(92, 164, 255));
+        if (entry.Kind == RemoteEntryKind.SymbolicLink)
+            return (FluentGlyphs.Link, Color.FromRgb(166, 139, 250));
+
+        var extension = Path.GetExtension(entry.Name).ToLowerInvariant();
+        if (extension is ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".webp" or ".svg" or ".ico")
+            return (FluentGlyphs.ImageFile, Color.FromRgb(83, 201, 158));
+        if (extension is ".zip" or ".tar" or ".gz" or ".tgz" or ".bz2" or ".xz" or ".7z" or ".rar")
+            return (FluentGlyphs.ArchiveFile, Color.FromRgb(231, 176, 74));
+        if (extension is ".cs" or ".fs" or ".vb" or ".js" or ".ts" or ".tsx" or ".jsx" or ".py" or ".go" or ".rs" or ".java" or ".c" or ".h" or ".cpp" or ".hpp" or ".sh" or ".ps1")
+            return (FluentGlyphs.CodeFile, Color.FromRgb(107, 174, 255));
+        if (extension is ".json" or ".xml" or ".yaml" or ".yml" or ".toml" or ".ini" or ".conf" or ".config" or ".env")
+            return (FluentGlyphs.SettingsFile, Color.FromRgb(142, 153, 172));
+        if (extension is ".pem" or ".key" or ".pub" or ".crt" or ".cer" or ".pfx")
+            return (FluentGlyphs.KeyFile, Color.FromRgb(239, 129, 136));
+        if (extension is ".exe" or ".msi" or ".bin" or ".app" or ".deb" or ".rpm" ||
+            string.IsNullOrEmpty(extension) && entry.Name is "bin" or "bash" or "sh" or "zsh")
+            return (FluentGlyphs.ExecutableFile, Color.FromRgb(130, 214, 153));
+        return (FluentGlyphs.File, Color.FromRgb(177, 190, 207));
+    }
+
+    private Task EnsureSftpChildrenAsync(SftpTreeItem item) => EnsureSftpChildrenAsync(item, null);
+
+    private async Task EnsureSftpChildrenAsync(SftpTreeItem item, long? expectedRequestVersion)
+    {
+        if (item.ChildrenLoaded || item.IsLoading || !item.IsDirectory ||
+            !_sessions.TryGetValue(item.SessionId, out var workspaceSession) || workspaceSession.Transport is not { } transport)
+            return;
+        item.IsLoading = true;
+        var requestVersion = expectedRequestVersion ?? workspaceSession.SftpRequestVersion;
+        try
+        {
+            var entries = await transport.ListAsync(item.Path, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+            if (workspaceSession.SftpRequestVersion != requestVersion) return;
+            await InvokeUiAsync(() =>
+            {
+                if (workspaceSession.SftpRequestVersion != requestVersion) return;
+                foreach (var entry in entries
+                             .OrderByDescending(entry => entry.Kind == RemoteEntryKind.Directory)
+                             .ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    var label = entry.Kind == RemoteEntryKind.Directory ? entry.Name + "/" : entry.Name;
+                    item.Children.Add(CreateSftpItem(workspaceSession, entry, entry.FullPath, label));
+                }
+                if (item.Placeholder is not null) item.Children.Remove(item.Placeholder);
+                item.Placeholder = null;
+                item.ChildrenLoaded = true;
+                item.IsLoading = false;
+            }).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            item.IsLoading = false;
+            UpdateSessionStatus(workspaceSession, $"SFTP: {SafeError(exception)}", "#fda4af");
+        }
+    }
+
+    private void SelectSftpTreeItem()
+    {
+        if (_sftpTree?.SelectedItem is not SftpTreeItem item || !_sessions.TryGetValue(item.SessionId, out var workspaceSession)) return;
+        workspaceSession.SelectedRemoteEntry = item.Entry;
+        workspaceSession.CurrentRemotePath = item.IsDirectory ? item.Path : RemoteParent(item.Path);
+        if (_sftpPathText is not null) _sftpPathText.TextContent = workspaceSession.CurrentRemotePath;
+    }
+
+    private void OpenSftpContextMenu(PointerEvent e)
+    {
+        if (_sftpTree is null) return;
+        if (FindAncestor<SftpTreeItem>(e.Target as Element) is { } item) _sftpTree.SelectItem(item);
+        OpenSelectedSftpMenu(new Point(e.ClientX, e.ClientY));
+        e.PreventDefault();
+    }
+
+    private void OpenSelectedSftpMenu() => OpenSelectedSftpMenu(null);
+
+    private void OpenSelectedSftpMenu(Point? position)
+    {
+        if (_sftpTree?.SelectedItem is not SftpTreeItem item || !_sessions.TryGetValue(item.SessionId, out var workspaceSession)) return;
+        var menu = new ContextMenu();
+        menu.ClassList.Add("context-menu");
+        if (item.IsDirectory)
+        {
+            menu.Children.Add(MenuCommand("刷新目录", () => _ = ReloadSftpDirectoryAsync(item)));
+            menu.Children.Add(MenuCommand("新建文件夹", () => _ = CreateRemoteDirectoryAsync(item.Path)));
+            menu.Children.Add(MenuCommand("上传文件到这里", () => _ = UploadRemoteFileAsync(item.Path)));
+            menu.Children.Add(MenuCommand("粘贴", () => _ = PasteRemoteItemAsync(item.Path)));
+            menu.Children.Add(new MenuSeparator());
+        }
+        if (item.Entry is not null)
+        {
+            if (!item.IsDirectory) menu.Children.Add(MenuCommand("下载到本地", () => _ = DownloadRemoteFileAsync(item)));
+            menu.Children.Add(MenuCommand("重命名 / 移动", () => _ = RenameRemoteItemAsync(item)));
+            menu.Children.Add(MenuCommand("复制", () => CopyRemoteItem(workspaceSession, item, cut: false)));
+            menu.Children.Add(MenuCommand("剪切", () => CopyRemoteItem(workspaceSession, item, cut: true)));
+            menu.Children.Add(MenuCommand("删除", () => _ = DeleteRemoteItemAsync(item)));
+            menu.Children.Add(new MenuSeparator());
+        }
+        menu.Children.Add(MenuCommand("复制路径", () => _ = CopyRemotePathAsync(item.Path)));
+        menu.Children.Add(MenuCommand("发送路径到终端", () => _ = WriteTerminalInputAsync(workspaceSession, QuoteShellPath(item.Path))));
+        OpenContextMenu(menu, position ?? MenuPointFor(item));
+    }
+
+    private async Task ReloadSftpDirectoryAsync(SftpTreeItem item)
+    {
+        item.ChildrenLoaded = false;
+        item.Children.Clear();
+        item.Placeholder = new TreeItem("正在加载...") { IsEnabled = false };
+        item.Children.Add(item.Placeholder);
+        await EnsureSftpChildrenAsync(item).ConfigureAwait(false);
+        await InvokeUiAsync(() => item.Expand()).ConfigureAwait(false);
+    }
+
+    private Task CreateRemoteDirectoryAsync() => CreateRemoteDirectoryAsync(GetRemoteTargetDirectory(ActiveSession));
+
+    private async Task CreateRemoteDirectoryAsync(string? directory)
+    {
+        var workspaceSession = ActiveSession;
+        if (_root is null || workspaceSession?.Transport is not { } transport || directory is null) return;
+        var name = await WorkspaceDialogs.PromptAsync(_root, "新建远程目录", placeholder: "目录名称");
+        if (!IsValidRemoteName(name)) return;
+        try
+        {
+            await transport.CreateDirectoryAsync(RemoteChild(directory, name!), workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+            await RefreshSftpAsync(workspaceSession).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            UpdateSessionStatus(workspaceSession, $"新建目录失败: {SafeError(exception)}", "#fda4af");
+        }
+    }
+
+    private Task UploadRemoteFileAsync() => UploadRemoteFileAsync(GetRemoteTargetDirectory(ActiveSession));
+
+    private async Task UploadRemoteFileAsync(string? directory)
+    {
+        var workspaceSession = ActiveSession;
+        if (_root is null || workspaceSession?.Transport is not { } transport || directory is null) return;
+        var localPath = await WorkspaceDialogs.PromptAsync(_root, "上传本地文件", placeholder: "本地文件完整路径");
+        if (string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath))
+        {
+            UpdateSessionStatus(workspaceSession, "本地文件不存在。", "#f6c66b");
             return;
         }
         try
         {
-            var entries = await session.ListAsync("/", _lifetime.Token).ConfigureAwait(false);
-            var summary = string.Join('\n', entries.Take(14).Select(static entry => $"{(entry.Kind == RemoteEntryKind.Directory ? "d" : "-")} {entry.Name}"));
-            await InvokeUiAsync(() => SetText(_fileResults, summary.Length == 0 ? "Directory is empty." : summary, "#c6d0df")).ConfigureAwait(false);
+            await using var source = File.OpenRead(localPath);
+            await transport.UploadAsync(source, RemoteChild(directory, Path.GetFileName(localPath)), overwrite: false,
+                workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+            await RefreshSftpAsync(workspaceSession).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
-            await InvokeUiAsync(() => SetText(_fileResults, SafeError(exception), "#fda4af")).ConfigureAwait(false);
+            UpdateSessionStatus(workspaceSession, $"上传失败: {SafeError(exception)}", "#fda4af");
         }
     }
 
+    private async Task DownloadRemoteFileAsync(SftpTreeItem item)
+    {
+        if (_root is null || !_sessions.TryGetValue(item.SessionId, out var workspaceSession) ||
+            workspaceSession.Transport is not { } transport || item.Entry is null) return;
+        var defaultPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", item.Entry.Name);
+        var localPath = await WorkspaceDialogs.PromptAsync(_root, "下载远程文件", defaultPath, "本地保存完整路径");
+        if (string.IsNullOrWhiteSpace(localPath)) return;
+        var temporaryPath = localPath + ".termsquared-part";
+        try
+        {
+            var directory = Path.GetDirectoryName(localPath);
+            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+            await using (var destination = File.Create(temporaryPath))
+                await transport.DownloadAsync(item.Path, destination, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+            File.Move(temporaryPath, localPath, overwrite: true);
+            UpdateSessionStatus(workspaceSession, $"已下载到 {localPath}", "#7ee2ae");
+        }
+        catch (Exception exception)
+        {
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+            UpdateSessionStatus(workspaceSession, $"下载失败: {SafeError(exception)}", "#fda4af");
+        }
+    }
+
+    private async Task RenameRemoteItemAsync(SftpTreeItem item)
+    {
+        if (_root is null || item.Entry is null || !_sessions.TryGetValue(item.SessionId, out var workspaceSession) ||
+            workspaceSession.Transport is not { } transport) return;
+        var destination = await WorkspaceDialogs.PromptAsync(_root, "重命名或移动", item.Path, "远程完整路径");
+        if (string.IsNullOrWhiteSpace(destination) || destination == item.Path || !destination.StartsWith('/')) return;
+        try
+        {
+            await transport.RenameAsync(item.Path, destination, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+            await RefreshSftpAsync(workspaceSession).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            UpdateSessionStatus(workspaceSession, $"移动失败: {SafeError(exception)}", "#fda4af");
+        }
+    }
+
+    private void CopyRemoteItem(WorkspaceSession workspaceSession, SftpTreeItem item, bool cut)
+    {
+        if (item.Entry is null) return;
+        _remoteClipboard = new RemoteClipboardItem(workspaceSession.Id, item.Path, item.Entry.Name, item.IsDirectory, cut);
+        UpdateSessionStatus(workspaceSession, cut ? "已剪切远程项目，选择目标目录后粘贴。" : "已复制远程项目，选择目标目录后粘贴。", "#8fb6ff");
+    }
+
+    private async Task PasteRemoteItemAsync(string destinationDirectory)
+    {
+        var clipboard = _remoteClipboard;
+        if (clipboard is null || !_sessions.TryGetValue(clipboard.SessionId, out var workspaceSession) ||
+            workspaceSession.Transport is not { } transport || ActiveSession?.Id != clipboard.SessionId) return;
+        var destination = RemoteChild(destinationDirectory, clipboard.Name);
+        if (destination == clipboard.Path || destination.StartsWith(clipboard.Path.TrimEnd('/') + '/', StringComparison.Ordinal))
+        {
+            UpdateSessionStatus(workspaceSession, "目标路径不能位于源目录内部。", "#f6c66b");
+            return;
+        }
+        try
+        {
+            if (clipboard.Cut)
+                await transport.RenameAsync(clipboard.Path, destination, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+            else if (clipboard.IsDirectory)
+                await CopyRemoteDirectoryAsync(transport, clipboard.Path, destination, 0, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+            else
+                await transport.CopyFileAsync(clipboard.Path, destination, overwrite: false,
+                    workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+            if (clipboard.Cut) _remoteClipboard = null;
+            await RefreshSftpAsync(workspaceSession).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            UpdateSessionStatus(workspaceSession, $"粘贴失败: {SafeError(exception)}", "#fda4af");
+        }
+    }
+
+    private static async Task CopyRemoteDirectoryAsync(
+        SshSession transport,
+        string source,
+        string destination,
+        int depth,
+        CancellationToken cancellationToken)
+    {
+        if (depth >= 64) throw new InvalidDataException("Remote directory nesting is too deep.");
+        await transport.CreateDirectoryAsync(destination, cancellationToken).ConfigureAwait(false);
+        foreach (var entry in await transport.ListAsync(source, cancellationToken).ConfigureAwait(false))
+        {
+            var target = RemoteChild(destination, entry.Name);
+            if (entry.Kind == RemoteEntryKind.Directory)
+                await CopyRemoteDirectoryAsync(transport, entry.FullPath, target, depth + 1, cancellationToken).ConfigureAwait(false);
+            else if (entry.Kind == RemoteEntryKind.File)
+                await transport.CopyFileAsync(entry.FullPath, target, overwrite: false, cancellationToken).ConfigureAwait(false);
+            else
+                throw new NotSupportedException($"Remote entry type '{entry.Kind}' cannot be copied safely.");
+        }
+    }
+
+    private async Task DeleteRemoteItemAsync(SftpTreeItem item)
+    {
+        if (_root is null || item.Entry is null || !_sessions.TryGetValue(item.SessionId, out var workspaceSession) ||
+            workspaceSession.Transport is not { } transport ||
+            !await WorkspaceDialogs.ConfirmAsync(_root, "删除远程项目", $"永久删除 {item.Path}？\n目录将递归删除，此操作无法撤销。")) return;
+        try
+        {
+            if (item.IsDirectory)
+                await DeleteRemoteDirectoryAsync(transport, item.Path, 0, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+            else
+                await transport.RemoveFileAsync(item.Path, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+            await RefreshSftpAsync(workspaceSession).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            UpdateSessionStatus(workspaceSession, $"删除失败: {SafeError(exception)}", "#fda4af");
+        }
+    }
+
+    private static async Task DeleteRemoteDirectoryAsync(
+        SshSession transport,
+        string path,
+        int depth,
+        CancellationToken cancellationToken)
+    {
+        if (depth >= 64) throw new InvalidDataException("Remote directory nesting is too deep.");
+        foreach (var entry in await transport.ListAsync(path, cancellationToken).ConfigureAwait(false))
+        {
+            if (entry.Kind == RemoteEntryKind.Directory)
+                await DeleteRemoteDirectoryAsync(transport, entry.FullPath, depth + 1, cancellationToken).ConfigureAwait(false);
+            else
+                await transport.RemoveFileAsync(entry.FullPath, cancellationToken).ConfigureAwait(false);
+        }
+        await transport.RemoveDirectoryAsync(path, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task CopyRemotePathAsync(string path)
+    {
+        if (_window is not null) await _window.SetClipboardTextAsync(path).ConfigureAwait(false);
+    }
+
+    private static string? GetRemoteTargetDirectory(WorkspaceSession? workspaceSession)
+    {
+        if (workspaceSession is null) return null;
+        return workspaceSession.SelectedRemoteEntry is { Kind: RemoteEntryKind.Directory } directory
+            ? directory.FullPath
+            : workspaceSession.CurrentRemotePath;
+    }
+
+    private static string RemoteChild(string parent, string name) =>
+        parent == "/" ? "/" + name : parent.TrimEnd('/') + "/" + name;
+
+    private static string RemoteParent(string path)
+    {
+        var normalized = path.TrimEnd('/');
+        var index = normalized.LastIndexOf('/');
+        return index <= 0 ? "/" : normalized[..index];
+    }
+
+    private static bool IsValidRemoteName(string? name) =>
+        !string.IsNullOrWhiteSpace(name) && name is not "." and not ".." && !name.Contains('/');
+
+    private static string QuoteShellPath(string path) => "'" + path.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
+
     private async Task ProbeVncAsync()
     {
-        await SetStatusAsync("Connecting VNC 10.10.0.4:5900...", "#fbbf24").ConfigureAwait(false);
+        var profile = ActiveSession?.Profile ?? _selectedProfile;
+        if (profile is null)
+        {
+            await SetStatusAsync("请先选择一个连接，再从工具菜单检测 VNC", "#f6c66b").ConfigureAwait(false);
+            return;
+        }
+        var host = profile.Host;
+        const int port = 5900;
+        await SetStatusAsync($"正在检测 VNC {host}:{port}...", "#f6c66b").ConfigureAwait(false);
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(15));
             using var tcp = new TcpClient();
-            await tcp.ConnectAsync("10.10.0.4", 5900, timeout.Token).ConfigureAwait(false);
+            await tcp.ConnectAsync(host, port, timeout.Token).ConfigureAwait(false);
             await using var client = new RfbClient(tcp.GetStream(), leaveOpen: true);
             var info = await client.HandshakeAsync(timeout.Token).ConfigureAwait(false);
             await client.SetEncodingsAsync([0], timeout.Token).ConfigureAwait(false);
-            await SetStatusAsync($"VNC ready: {info.Name} {info.Width}x{info.Height}, Raw encoding", "#86efac").ConfigureAwait(false);
+            await SetStatusAsync($"VNC 可用: {info.Name}  {info.Width}x{info.Height}  Raw", "#7ee2ae").ConfigureAwait(false);
         }
         catch (Exception exception)
         {
-            await SetStatusAsync($"VNC failed: {SafeError(exception)}", "#fda4af").ConfigureAwait(false);
+            await SetStatusAsync($"VNC 检测失败: {SafeError(exception)}", "#ff9baa").ConfigureAwait(false);
         }
     }
 
     private void LaunchRdp()
     {
-        var host = _rdpHost?.Value.Trim();
-        var username = _rdpUsername?.Value.Trim();
-        if (string.IsNullOrWhiteSpace(host) || !int.TryParse(_rdpPort?.Value, out var port) || port is < 1 or > ushort.MaxValue)
+        var profile = ActiveSession?.Profile ?? _selectedProfile;
+        if (profile is null)
         {
-            _ = SetStatusAsync("RDP requires a host and a valid port.", "#fda4af");
+            _ = SetStatusAsync("请先选择一个连接，再从工具菜单启动 RDP", "#f6c66b");
             return;
         }
+        var host = profile.Host;
+        var username = profile.Username;
+        const int port = 3389;
         try
         {
             using var process = _rdpLauncher.Launch(new RdpConnectionOptions(host, port,
                 string.IsNullOrWhiteSpace(username) ? null : username));
-            _ = SetStatusAsync($"RDP launched for {host}:{port}. Windows will prompt for credentials.", "#86efac");
+            _ = SetStatusAsync($"已启动 {host}:{port} 的 RDP，凭据将由 Windows 安全提示输入", "#7ee2ae");
         }
         catch (Exception exception)
         {
-            _ = SetStatusAsync($"RDP failed: {SafeError(exception)}", "#fda4af");
+            _ = SetStatusAsync($"RDP 启动失败: {SafeError(exception)}", "#ff9baa");
         }
     }
 
-    private async Task DisconnectAsync()
+    private async Task DisconnectSessionAsync(WorkspaceSession workspaceSession)
     {
-        SshShellSession? shell;
-        SshSession? session;
-        lock (_sessionGate)
+        await workspaceSession.LifecycleGate.WaitAsync().ConfigureAwait(false);
+        try
         {
-            shell = _shell;
-            session = _session;
-            _shell = null;
-            _session = null;
+            await DisconnectSessionCoreAsync(workspaceSession, preparingConnection: false).ConfigureAwait(false);
+        }
+        finally
+        {
+            workspaceSession.LifecycleGate.Release();
+        }
+    }
+
+    private async Task DisconnectSessionCoreAsync(WorkspaceSession workspaceSession, bool preparingConnection)
+    {
+        var shell = workspaceSession.Shell;
+        var transport = workspaceSession.Transport;
+        var reader = workspaceSession.ReaderTask;
+        var hadSession = shell is not null || transport is not null;
+        workspaceSession.Generation++;
+        workspaceSession.Shell = null;
+        workspaceSession.Transport = null;
+        workspaceSession.ReaderTask = Task.CompletedTask;
+        var connectionLifetime = workspaceSession.ConnectionLifetime;
+        workspaceSession.ConnectionLifetime = null;
+        if (connectionLifetime is not null)
+        {
+            await connectionLifetime.CancelAsync().ConfigureAwait(false);
+            connectionLifetime.Dispose();
         }
         if (shell is not null) await shell.DisposeAsync().ConfigureAwait(false);
-        if (session is not null) await session.DisposeAsync().ConfigureAwait(false);
-        if (_window is not null && !_window.IsClosed)
-            await InvokeUiAsync(() => SetText(_sessionStatus, "就绪  |  UTF-8  |  Software renderer", "#8c96a8")).ConfigureAwait(false);
+        if (!ReferenceEquals(reader, Task.CompletedTask))
+        {
+            try { await reader.ConfigureAwait(false); } catch (OperationCanceledException) { }
+        }
+        if (transport is not null) await transport.DisposeAsync().ConfigureAwait(false);
+        if (preparingConnection) return;
+        workspaceSession.State = SessionState.Disconnected;
+        workspaceSession.StatusText = $"已断开 {workspaceSession.Profile.Host}:{workspaceSession.Profile.Port}";
+        workspaceSession.StatusColor = "#9aa7b8";
+        workspaceSession.PendingHostKey = null;
+        workspaceSession.PendingHostKeyPromptId = null;
+        await InvokeUiAsync(() =>
+        {
+            if (hadSession) AddHistoryEntry(workspaceSession.Profile, "已断开", "#9aa7b8");
+            RenderSession(workspaceSession);
+        }).ConfigureAwait(false);
     }
 
     private Task SetStatusAsync(string status, string color) =>
-        InvokeUiAsync(() =>
-        {
-            SetText(_sessionStatus, status, color);
-            SetText(_details, status, color);
-        });
+        InvokeUiAsync(() => SetText(_sessionStatus, status, color));
 
     private Task InvokeUiAsync(Action action)
     {
@@ -526,7 +1832,175 @@ internal sealed class AppController : IDisposable
     {
         if (_trustOnceButton is not null) _trustOnceButton.IsEnabled = enabled;
         if (_trustStoreButton is not null) _trustStoreButton.IsEnabled = enabled;
+        if (_hostKeyApproval is not null) _hostKeyApproval.IsVisible = enabled;
     }
+
+    private void AddHistoryEntry(ConnectionProfile profile, string result, string color)
+    {
+        if (_historyItems is null) return;
+        if (!_hasHistory)
+        {
+            _historyItems.Children.Clear();
+            _hasHistory = true;
+        }
+
+        var item = Panel("", "column", "100%", "72px");
+        item.ClassList.Add("history-item");
+        item.Style.Set("padding", "9px 10px");
+        item.Style.Set("gap", "4px");
+        var title = Caption(profile.Name, "#dfe7f2");
+        title.Style.Set("font-weight", "700");
+        item.Children.Add(title);
+        item.Children.Add(Caption($"{profile.Username}@{profile.Host}:{profile.Port}", "#8290a3"));
+        item.Children.Add(Caption($"{DateTime.Now:HH:mm:ss}  {result}", color));
+        _historyItems.Children.Insert(0, item);
+    }
+
+    private void ShowHistoryContext()
+    {
+        SetRightContext(FluentGlyphs.History, "历史记录", "本次运行", history: true);
+    }
+
+    private void ShowSftpContext(ConnectionProfile profile)
+    {
+        SetRightContext(FluentGlyphs.Folder, "SFTP 文件", profile.Name, sftp: true);
+    }
+
+    private void ShowSecurityContext()
+    {
+        SetRightContext(FluentGlyphs.Lock, "安全确认", "主机密钥", security: true);
+    }
+
+    private void SetRightContext(
+        string glyph,
+        string title,
+        string subtitle,
+        bool history = false,
+        bool sftp = false,
+        bool security = false)
+    {
+        if (_rightPanelIcon is not null) _rightPanelIcon.Glyph = glyph;
+        SetText(_rightPanelTitle, title, "#e7edf5");
+        SetText(_rightPanelSubtitle, subtitle, "#718096");
+        if (_historyPanel is not null) _historyPanel.IsVisible = history;
+        if (_sftpPanel is not null) _sftpPanel.IsVisible = sftp;
+        if (_securityPanel is not null) _securityPanel.IsVisible = security;
+    }
+
+    private void ApplyConnectionFilter()
+    {
+        var query = _connectionFilter?.Value.Trim() ?? "";
+        var visible = 0;
+        foreach (var entry in _connectionItems)
+        {
+            var profile = entry.Value.Profile;
+            var matches = query.Length == 0 ||
+                          entry.Value.TextContent.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                          profile.Host.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                          (profile.Username?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false);
+            entry.Value.IsVisible = matches;
+            if (matches) visible++;
+        }
+        if (_connectionEmptyState is not null)
+        {
+            _connectionEmptyState.TextContent = visible == 0
+                ? (_profiles.Count == 0 ? "未发现连接配置。" : "没有匹配的连接。")
+                : "";
+            _connectionEmptyState.IsVisible = visible == 0;
+        }
+    }
+
+    private void RequestDisconnect()
+    {
+        var session = ActiveSession;
+        if (session is null || session.State is not SessionState.Connected and not SessionState.Connecting)
+        {
+            _ = SetStatusAsync("当前没有活动会话", "#9aa7b8");
+            return;
+        }
+        _ = DisconnectSessionAsync(session);
+    }
+
+    private void RestoreHiddenConnections()
+    {
+        _workspaceSettings.RestoreHiddenConnections();
+        RebuildConnectionTree();
+        _ = SetStatusAsync("已恢复从工作区移除的连接", "#7ee2ae");
+    }
+
+    private void RequestConnect()
+    {
+        if (ActiveSession is { } session)
+        {
+            if (session.State == SessionState.Connecting) return;
+            _ = ConnectAsync(session, HostKeyDecision.Reject);
+            return;
+        }
+        if (_selectedProfile is null)
+        {
+            _ = SetStatusAsync("请先从左侧选择一个连接", "#f6c66b");
+            return;
+        }
+        if (_connectionTree?.SelectedItem is ConnectionProfileTreeItem item)
+            _ = OpenSessionAsync(item.Profile, displayName: item.TextContent,
+                forceNew: item.WorkspaceId != item.Profile.Id.ToString("D"));
+        else
+            _ = OpenSessionAsync(_selectedProfile);
+    }
+
+    private static void TogglePanel(View? panel, Splitter? splitter = null)
+    {
+        if (panel is null) return;
+        panel.IsVisible = !panel.IsVisible;
+        if (splitter is not null) splitter.IsVisible = panel.IsVisible;
+    }
+
+    private void ToggleLeftSidebar()
+    {
+        if (_window?.ClientSize.Width < 760)
+        {
+            _ = SetStatusAsync("当前窗口过窄，放大后可显示连接侧栏", "#f6c66b");
+            return;
+        }
+        _leftSidebarRequested = !_leftSidebarRequested;
+        ApplyResponsiveLayout(_window!.ClientSize);
+    }
+
+    private void ToggleRightSidebar()
+    {
+        if (_window?.ClientSize.Width < 1180)
+        {
+            _ = SetStatusAsync("当前窗口过窄，放大后可显示远程检查器", "#f6c66b");
+            return;
+        }
+        _rightSidebarRequested = !_rightSidebarRequested;
+        ApplyResponsiveLayout(_window!.ClientSize);
+    }
+
+    private void ApplyResponsiveLayout(Square.Graphics.Size size)
+    {
+        var showLeft = _leftSidebarRequested && size.Width >= 760;
+        var showRight = _rightSidebarRequested && size.Width >= 1180;
+        if (_leftSidebar is not null) _leftSidebar.IsVisible = showLeft;
+        if (_leftSplitter is not null) _leftSplitter.IsVisible = showLeft;
+        if (_rightSidebar is not null) _rightSidebar.IsVisible = showRight;
+        if (_rightSplitter is not null) _rightSplitter.IsVisible = showRight;
+    }
+
+    private static MenuItem MenuGroup(string title, params UIElement[] children)
+    {
+        var item = new MenuItem { TextContent = title };
+        var menu = new Menu();
+        foreach (var child in children) menu.Children.Add(child);
+        item.Children.Add(menu);
+        return item;
+    }
+
+    private static MenuItem MenuCommand(string title, Action action) => new()
+    {
+        TextContent = title,
+        Command = _ => action()
+    };
 
     private static void SetText(Text? text, string value, string color)
     {
@@ -539,30 +2013,57 @@ internal sealed class AppController : IDisposable
     {
         OperationCanceledException => "operation cancelled",
         SocketException => "network connection failed",
+        ArgumentException => exception.Message,
+        InvalidDataException => exception.Message,
         _ when exception.GetType().Name == "SshAuthenticationException" => "authentication failed",
         _ => exception.GetType().Name
     };
 
-    private static Button ActionButton(string text, Action action, bool compact = false)
+    private static Button ActionButton(string text, Action action, bool compact = false, string? className = null)
     {
         var button = new Button(text);
         button.Style.Set("width", compact ? "auto" : "100%");
         button.Style.Set("height", compact ? "30px" : "36px");
         button.Style.Set("padding", compact ? "3px 10px" : "6px 12px");
-        button.Style.Set("background", "#263244");
-        button.Style.Set("color", "#e7edf7");
-        button.Style.Set("border", "1px solid #3b4a60");
+        if (!string.IsNullOrWhiteSpace(className)) button.ClassList.Add(className);
         button.AddEventListener(StandardEvents.Click, action);
         return button;
+    }
+
+    private static Button IconButton(string glyph, string tooltip, Action action, string? className = null)
+    {
+        var button = ActionButton(glyph, action, compact: true, className: className);
+        button.ClassList.Add("icon-button");
+        button.Style.Set("width", "34px");
+        button.Style.Set("height", "30px");
+        button.Style.Set("padding", "0");
+        button.Style.Set("font-family", "'Segoe Fluent Icons', 'Segoe MDL2 Assets'");
+        button.Style.Set("font-size", "16px");
+        button.Tooltip = tooltip;
+        return button;
+    }
+
+    private static Button TreeActionButton(string text, Action action)
+    {
+        var button = ActionButton(text, action, compact: true, className: "tree-action");
+        button.Style.Set("width", "54px");
+        return button;
+    }
+
+    private static FontIcon FluentIcon(string glyph, string color, float size)
+    {
+        var icon = new FontIcon("Segoe Fluent Icons", glyph) { FontSize = size };
+        icon.ClassList.Add("fluent-icon");
+        icon.Style.Set("color", color);
+        icon.Style.Set("width", size.ToString("0", CultureInfo.InvariantCulture) + "px");
+        icon.Style.Set("height", size.ToString("0", CultureInfo.InvariantCulture) + "px");
+        return icon;
     }
 
     private static Input RdpInput(string placeholder, string value, string type = "text")
     {
         var input = new Input { Placeholder = placeholder, Value = value, Type = type };
         input.Style.Set("width", "100%");
-        input.Style.Set("background", "#10141b");
-        input.Style.Set("color", "#e7edf7");
-        input.Style.Set("border", "1px solid #3b4a60");
         return input;
     }
 
@@ -573,17 +2074,9 @@ internal sealed class AppController : IDisposable
         panel.Style.Set("flex-direction", direction);
         panel.Style.Set("width", width);
         panel.Style.Set("height", height);
-        panel.Style.Set("background", background);
+        if (!string.IsNullOrWhiteSpace(background)) panel.Style.Set("background", background);
         panel.Style.Set("gap", "12px");
         return panel;
-    }
-
-    private static Text Heading(string value, float size, string color)
-    {
-        var text = new Text(value) { FontSize = size };
-        text.Style.Set("color", color);
-        text.Style.Set("font-weight", "700");
-        return text;
     }
 
     private static Text Caption(string value, string color, string height = "auto", string padding = "0")
@@ -600,9 +2093,18 @@ internal sealed class AppController : IDisposable
         if (_disposed) return;
         _disposed = true;
         _lifetime.Cancel();
+        foreach (var session in _sessions.Values.ToArray())
+        {
+            try
+            {
+                DisconnectSessionAsync(session).GetAwaiter().GetResult();
+            }
+            catch
+            {
+            }
+        }
         try
         {
-            DisconnectAsync().GetAwaiter().GetResult();
             _broker.DisposeAsync().AsTask().GetAwaiter().GetResult();
             _remoteOperations.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }

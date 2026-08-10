@@ -206,6 +206,21 @@ public sealed class SshSession : IAsyncDisposable
         await _sftp.UploadFileAsync(source, remotePath, linked.Token).ConfigureAwait(false);
     }
 
+    public async Task CopyFileAsync(string sourcePath, string destinationPath, bool overwrite, CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        using var linked = CreateTimeoutToken(cancellationToken);
+        if (!overwrite && await _sftp.ExistsAsync(destinationPath, linked.Token).ConfigureAwait(false))
+            throw new IOException("The remote destination already exists.");
+        await using var source = await _sftp.OpenAsync(sourcePath, FileMode.Open, FileAccess.Read, linked.Token).ConfigureAwait(false);
+        await using var destination = await _sftp.OpenAsync(
+            destinationPath,
+            overwrite ? FileMode.Create : FileMode.CreateNew,
+            FileAccess.Write,
+            linked.Token).ConfigureAwait(false);
+        await source.CopyToAsync(destination, 64 * 1024, linked.Token).ConfigureAwait(false);
+    }
+
     public async Task CreateDirectoryAsync(string path, CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
@@ -223,8 +238,24 @@ public sealed class SshSession : IAsyncDisposable
     public async Task RemoveFileAsync(string path, CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
+        var (parentPath, name) = SplitRemoteFilePath(path);
         using var linked = CreateTimeoutToken(cancellationToken);
-        await _sftp.DeleteFileAsync(path, linked.Token).ConfigureAwait(false);
+        await foreach (var item in _sftp.ListDirectoryAsync(parentPath, linked.Token).ConfigureAwait(false))
+        {
+            if (!string.Equals(item.Name, name, StringComparison.Ordinal)) continue;
+            if (item.IsDirectory) throw new IOException("The remote path is a directory.");
+            await item.DeleteAsync(linked.Token).ConfigureAwait(false);
+            return;
+        }
+        throw new SftpPathNotFoundException("The remote file was not found.");
+    }
+
+    internal static (string ParentPath, string Name) SplitRemoteFilePath(string path)
+    {
+        if (!PathRootPolicy.TryCanonicalizePosixPath(path, out var canonicalPath) || canonicalPath == "/")
+            throw new ArgumentException("The remote file path is invalid.", nameof(path));
+        var separator = canonicalPath.LastIndexOf('/');
+        return (separator == 0 ? "/" : canonicalPath[..separator], canonicalPath[(separator + 1)..]);
     }
 
     public async Task RemoveDirectoryAsync(string path, CancellationToken cancellationToken)

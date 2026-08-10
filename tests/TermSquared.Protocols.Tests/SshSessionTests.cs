@@ -16,6 +16,18 @@ public sealed class SshSessionTests
         Assert.False(session.IsConnected);
     }
 
+    [Theory]
+    [InlineData("/tmp/link", "/tmp", "link")]
+    [InlineData("/name", "/", "name")]
+    [InlineData("/tmp/../name", "/", "name")]
+    public void SplitsCanonicalRemoteFilePath(string path, string expectedParent, string expectedName)
+    {
+        var (parent, name) = SshSession.SplitRemoteFilePath(path);
+
+        Assert.Equal(expectedParent, parent);
+        Assert.Equal(expectedName, name);
+    }
+
     private sealed class RejectKnownHostStore : IKnownHostStore
     {
         public Task<HostKeyCheck> CheckAsync(string host, int port, string algorithm, ReadOnlyMemory<byte> hostKey, CancellationToken cancellationToken) =>
