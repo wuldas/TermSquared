@@ -1,0 +1,17 @@
+<template>
+  <View ref="Root" class="session-tabs">
+    <View ref="SessionTabsHost" class="session-tabs-host" />
+    <View class="session-tab-status">
+      <FontIcon ref="StatusIcon" class="fluent-icon" font-family="Segoe Fluent Icons" glyph="" />
+      <Text ref="StatusText" class="session-tab-status-text" text="选择左侧连接后建立会话" />
+    </View>
+  </View>
+</template>
+<script lang="csharp" namespace="TermSquared.App.Components" name="SessionTabs" access="internal">
+</script>
+<style>
+  .session-tabs { display: flex; flex-direction: row; align-items: flex-end; width: 100%; height: 42px; padding: 4px 8px 0 8px; gap: 6px; }
+  .session-tabs-host { display: flex; flex-direction: row; width: auto; height: 38px; gap: 4px; }
+  .session-tab-status { display: flex; flex: 1; flex-direction: row; align-items: center; width: auto; height: 38px; gap: 7px; }
+  .session-tab-status-text { flex: 1; color: #718096; }
+</style>

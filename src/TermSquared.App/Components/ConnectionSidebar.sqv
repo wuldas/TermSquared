@@ -1,0 +1,36 @@
+<template>
+  <View ref="Root" class="sidebar sidebar-left">
+    <View class="panel-header">
+      <FontIcon ref="HeaderIcon" class="fluent-icon" font-family="Segoe Fluent Icons" glyph="" />
+      <Text class="panel-title" text="连接" />
+      <Text class="panel-subtitle" text="SSH 配置" />
+    </View>
+    <View class="connection-filter-area">
+      <Input ref="ConnectionFilter" class="connection-filter" placeholder="按名称、主机或用户筛选" />
+    </View>
+    <View class="tree-toolbar">
+      <Button ref="AddConnectionButton" class="tree-action" text="新增" />
+      <Button ref="EditConnectionButton" class="tree-action" text="编辑" />
+      <Button ref="NewFolderButton" class="icon-button" text="" />
+      <Button ref="ConnectionMoreButton" class="icon-button" text="" />
+    </View>
+    <Tree ref="ConnectionTree" class="connection-tree" />
+    <Text ref="ConnectionEmptyState" class="connection-empty-state" text="" />
+  </View>
+</template>
+<script lang="csharp" namespace="TermSquared.App.Components" name="ConnectionSidebar" access="internal">
+</script>
+<style>
+  .sidebar { display: flex; flex-direction: column; height: 100%; gap: 0; }
+  .sidebar-left { width: 276px; }
+  .panel-header { display: flex; flex-direction: row; align-items: center; width: 100%; height: 48px; padding: 8px 12px; gap: 8px; }
+  .panel-title { flex: 1; color: #e7edf5; font-size: 14px; }
+  .panel-subtitle { color: #718096; }
+  .connection-filter-area { display: flex; flex-direction: column; width: 100%; height: 56px; padding: 10px 12px; gap: 0; }
+  .connection-filter { width: 100%; }
+  .tree-toolbar { display: flex; flex-direction: row; align-items: center; width: 100%; height: 34px; padding: 2px 10px; gap: 6px; }
+  .tree-action { width: 54px; height: 30px; padding: 3px 10px; }
+  .icon-button { width: 34px; height: 30px; padding: 0; font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets'; font-size: 16px; }
+  .connection-tree { display: flex; flex: 1; min-height: 0; padding: 6px 8px 12px 8px; }
+  .connection-empty-state { padding: 14px; color: #718096; }
+</style>

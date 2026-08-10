@@ -1,0 +1,43 @@
+<template>
+  <View ref="Root" class="top-bar">
+    <MenuBar ref="MenuBar" class="top-menu">
+      <MenuItem ref="SessionMenu" text="会话">
+        <Menu>
+          <MenuItem ref="ConnectMenuItem" text="连接所选会话" />
+          <MenuItem ref="DisconnectMenuItem" text="断开当前会话" />
+          <MenuSeparator />
+          <MenuItem ref="ExitMenuItem" text="退出" />
+        </Menu>
+      </MenuItem>
+      <MenuItem ref="ViewMenu" text="视图">
+        <Menu>
+          <MenuItem ref="ToggleLeftMenuItem" text="连接侧栏" />
+          <MenuItem ref="ToggleRightMenuItem" text="检查器侧栏" />
+          <MenuItem ref="ToggleBottomMenuItem" text="快速发送面板" />
+        </Menu>
+      </MenuItem>
+      <MenuItem ref="ToolsMenu" text="工具">
+        <Menu>
+          <MenuItem ref="RefreshRemoteMenuItem" text="刷新远程目录" />
+          <MenuItem ref="RestoreConnectionsMenuItem" text="恢复已移除连接" />
+          <MenuItem ref="ProbeVncMenuItem" text="检测所选主机 VNC" />
+          <MenuItem ref="LaunchRdpMenuItem" text="启动所选主机 RDP" />
+        </Menu>
+      </MenuItem>
+      <MenuItem ref="HelpMenu" text="帮助">
+        <Menu>
+          <MenuItem ref="AboutMenuItem" text="关于 TermSquared" />
+        </Menu>
+      </MenuItem>
+    </MenuBar>
+    <View class="top-bar-spacer" />
+    <Text ref="BrokerStatus" class="status-chip" text="MCP  LOCAL" />
+  </View>
+</template>
+<script lang="csharp" namespace="TermSquared.App.Components" name="TopBar" access="internal">
+</script>
+<style>
+  .top-bar { display: flex; flex-direction: row; align-items: center; width: 100%; height: 44px; gap: 8px; }
+  .top-menu { width: 280px; height: 32px; }
+  .top-bar-spacer { display: flex; flex: 1; width: auto; height: 1px; }
+</style>

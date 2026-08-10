@@ -1,0 +1,84 @@
+<template>
+  <View ref="Root" class="app-shell">
+    <TopBar ref="TopBar" />
+    <View ref="Body" class="workspace-body">
+      <ConnectionSidebar ref="LeftSidebar" style="width: 276px; height: 100%; flex-shrink: 0;" />
+      <Splitter ref="LeftSplitter" class="splitter" value="276" minimum="230" maximum="420" vertical="true" style="position: absolute; left: 274px; top: 0;" />
+      <WorkspaceCenter ref="Center" style="flex: 1; width: auto; height: 100%; min-width: 0;" />
+      <Splitter ref="RightSplitter" class="splitter" value="332" minimum="286" maximum="460" vertical="true" reversed="true" style="position: absolute; right: 330px; top: 0;" />
+      <InspectorSidebar ref="RightSidebar" style="width: 332px; height: 100%; flex-shrink: 0;" />
+    </View>
+    <StatusBar ref="StatusBar" />
+  </View>
+</template>
+<script lang="csharp" namespace="TermSquared.App" name="WorkspacePage" access="internal">
+using Square.Extensions.CodeEditor;
+using TermSquared.App.Components;
+using Text = Square.Controls.Text;
+
+public Element BottomPanel => Center.CommandPanel;
+public View LeftSidebarRoot => LeftSidebar.Root;
+public View RightSidebarRoot => RightSidebar.Root;
+
+public FontIcon ConnectionHeaderIcon => LeftSidebar.HeaderIcon;
+public FontIcon CommandPanelIcon => Center.CommandPanel.PanelIcon;
+public FontIcon SessionTabStatusIcon => Center.SessionTabs.StatusIcon;
+public FontIcon RightPanelIcon => RightSidebar.PanelIcon;
+public Text BrokerStatus => TopBar.BrokerStatus;
+
+public MenuItem ConnectMenuItem => TopBar.ConnectMenuItem;
+public MenuItem DisconnectMenuItem => TopBar.DisconnectMenuItem;
+public MenuItem ExitMenuItem => TopBar.ExitMenuItem;
+public MenuItem ToggleLeftMenuItem => TopBar.ToggleLeftMenuItem;
+public MenuItem ToggleRightMenuItem => TopBar.ToggleRightMenuItem;
+public MenuItem ToggleBottomMenuItem => TopBar.ToggleBottomMenuItem;
+public MenuItem RefreshRemoteMenuItem => TopBar.RefreshRemoteMenuItem;
+public MenuItem RestoreConnectionsMenuItem => TopBar.RestoreConnectionsMenuItem;
+public MenuItem ProbeVncMenuItem => TopBar.ProbeVncMenuItem;
+public MenuItem LaunchRdpMenuItem => TopBar.LaunchRdpMenuItem;
+public MenuItem AboutMenuItem => TopBar.AboutMenuItem;
+
+public Input ConnectionFilter => LeftSidebar.ConnectionFilter;
+public Button AddConnectionButton => LeftSidebar.AddConnectionButton;
+public Button EditConnectionButton => LeftSidebar.EditConnectionButton;
+public Button NewFolderButton => LeftSidebar.NewFolderButton;
+public Button ConnectionMoreButton => LeftSidebar.ConnectionMoreButton;
+public Tree ConnectionTree => LeftSidebar.ConnectionTree;
+public Text ConnectionEmptyState => LeftSidebar.ConnectionEmptyState;
+
+public View SessionTabsHost => Center.SessionTabs.SessionTabsHost;
+public Text SessionTabStatus => Center.SessionTabs.StatusText;
+public View SessionContentHost => Center.SessionContentHost;
+public View ProtocolToolsHost => Center.TerminalToolbar.ProtocolToolsHost;
+public Button ConnectButton => Center.TerminalToolbar.ConnectButton;
+public Button DisconnectButton => Center.TerminalToolbar.DisconnectButton;
+public Button RefreshFilesButton => Center.TerminalToolbar.RefreshFilesButton;
+public View CommandPanelBody => Center.CommandPanel.CommandPanelBody;
+public CodeEditor CommandEditor => Center.CommandPanel.CommandEditor;
+public Button SendButton => Center.CommandPanel.SendButton;
+public Button ClearCommandsButton => Center.CommandPanel.ClearCommandsButton;
+public Button ExpandCommandsButton => Center.CommandPanel.ExpandCommandsButton;
+
+public View HistoryPanel => RightSidebar.HistoryPanel;
+public View HistoryItems => RightSidebar.HistoryItems;
+public View SftpPanel => RightSidebar.SftpPanel;
+public Text SftpPathText => RightSidebar.SftpPathText;
+public Button NewRemoteFolderButton => RightSidebar.NewRemoteFolderButton;
+public Button UploadRemoteFileButton => RightSidebar.UploadRemoteFileButton;
+public Button SftpMoreButton => RightSidebar.SftpMoreButton;
+public Button RefreshSftpButton => RightSidebar.RefreshSftpButton;
+public Tree SftpTree => RightSidebar.SftpTree;
+public View SecurityPanel => RightSidebar.SecurityPanel;
+public Text Details => RightSidebar.Details;
+public View HostKeyApproval => RightSidebar.HostKeyApproval;
+public Button TrustOnceButton => RightSidebar.TrustOnceButton;
+public Button TrustStoreButton => RightSidebar.TrustStoreButton;
+public Text SessionStatus => StatusBar.SessionStatus;
+public Text RightPanelTitle => RightSidebar.PanelTitle;
+public Text RightPanelSubtitle => RightSidebar.PanelSubtitle;
+</script>
+<style>
+  .app-shell { display: flex; flex-direction: column; width: 100%; height: 100%; gap: 0; }
+  .workspace-body { display: flex; position: relative; flex: 1; flex-direction: row; width: 100%; height: auto; min-height: 0; gap: 0; }
+  .splitter { width: 4px; height: 100%; }
+</style>

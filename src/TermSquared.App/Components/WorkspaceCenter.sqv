@@ -1,0 +1,22 @@
+<template>
+  <View ref="Root" class="workspace-center">
+    <SessionTabs ref="SessionTabs" style="width: 100%; height: 42px;" />
+    <TerminalToolbar ref="TerminalToolbar" style="width: 100%; height: 48px;" />
+    <View ref="SessionContentHost" class="session-content-host">
+      <View class="subtle-surface empty-state">
+        <Text class="empty-state-title" text="打开一个远程会话" />
+        <Text class="empty-state-body" text="双击左侧连接或选择后点击连接。每个会话都有独立终端、命令草稿和 SFTP 状态。" />
+      </View>
+    </View>
+    <CommandPanel ref="CommandPanel" style="width: 100%;" />
+  </View>
+</template>
+<script lang="csharp" namespace="TermSquared.App.Components" name="WorkspaceCenter" access="internal">
+</script>
+<style>
+  .workspace-center { display: flex; flex: 1; flex-direction: column; width: auto; height: 100%; min-width: 0; gap: 0; }
+  .session-content-host { display: flex; flex: 1; flex-direction: column; width: 100%; height: auto; min-height: 260px; gap: 0; }
+  .empty-state { display: flex; flex-direction: column; width: 100%; height: 112px; padding: 16px 14px; gap: 7px; }
+  .empty-state-title { color: #c8d2df; font-weight: 700; }
+  .empty-state-body { color: #718096; white-space: pre-wrap; }
+</style>

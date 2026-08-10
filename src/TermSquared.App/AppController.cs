@@ -37,9 +37,9 @@ internal sealed class AppController : IDisposable
     private readonly Dictionary<string, ConnectionFolderTreeItem> _connectionFolders = new(StringComparer.Ordinal);
     private View? _root;
     private AppWindow? _window;
-    private View? _leftSidebar;
-    private View? _rightSidebar;
-    private View? _bottomPanel;
+    private Element? _leftSidebar;
+    private Element? _rightSidebar;
+    private Element? _bottomPanel;
     private Splitter? _leftSplitter;
     private Splitter? _rightSplitter;
     private Tree? _connectionTree;
@@ -112,136 +112,94 @@ internal sealed class AppController : IDisposable
         _broker.StartAsync(_lifetime.Token).GetAwaiter().GetResult();
     }
 
-    public View BuildWorkspace()
+    public Element BuildWorkspace()
     {
-        var root = Panel("", "column", "100%", "100%");
-        _root = root;
-        root.ClassList.Add("app-shell");
-        root.Style.Set("gap", "0");
-        root.Children.Add(BuildTopBar());
+        var page = new WorkspacePage();
+        page.BuildElementTree();
 
-        var body = Panel("", "row", "100%", "auto");
-        body.Style.Set("flex", "1");
-        body.Style.Set("min-height", "0");
-        body.Style.Set("gap", "0");
+        _root = page.Root;
+        _leftSidebar = page.LeftSidebar;
+        _rightSidebar = page.RightSidebar;
+        _bottomPanel = page.BottomPanel;
+        _leftSplitter = page.LeftSplitter;
+        _rightSplitter = page.RightSplitter;
+        _connectionTree = page.ConnectionTree;
+        _sftpTree = page.SftpTree;
+        _sessionTabsHost = page.SessionTabsHost;
+        _sessionContentHost = page.SessionContentHost;
+        _protocolToolsHost = page.ProtocolToolsHost;
+        _connectionEmptyState = page.ConnectionEmptyState;
+        _hostKeyApproval = page.HostKeyApproval;
+        _historyPanel = page.HistoryPanel;
+        _historyItems = page.HistoryItems;
+        _sftpPanel = page.SftpPanel;
+        _securityPanel = page.SecurityPanel;
+        _commandPanelBody = page.CommandPanelBody;
+        _commandEditor = page.CommandEditor;
+        _sessionStatus = page.SessionStatus;
+        _details = page.Details;
+        _sftpPathText = page.SftpPathText;
+        _sessionTabStatus = page.SessionTabStatus;
+        _rightPanelTitle = page.RightPanelTitle;
+        _rightPanelSubtitle = page.RightPanelSubtitle;
+        _sessionTabStatusIcon = page.SessionTabStatusIcon;
+        _rightPanelIcon = page.RightPanelIcon;
+        _connectionFilter = page.ConnectionFilter;
+        _connectButton = page.ConnectButton;
+        _disconnectButton = page.DisconnectButton;
+        _refreshFilesButton = page.RefreshFilesButton;
+        _sendButton = page.SendButton;
+        _clearCommandsButton = page.ClearCommandsButton;
+        _expandCommandsButton = page.ExpandCommandsButton;
+        _trustOnceButton = page.TrustOnceButton;
+        _trustStoreButton = page.TrustStoreButton;
 
-        _leftSidebar = BuildConnectionSidebar();
-        _leftSplitter = BuildVerticalSplitter(_leftSidebar, 276, 230, 420);
-
-        var center = Panel("", "column", "auto", "100%");
-        center.Style.Set("flex", "1");
-        center.Style.Set("min-width", "0");
-        center.Style.Set("gap", "0");
-        center.Children.Add(BuildSessionTabs());
-        center.Children.Add(BuildTerminalToolbar());
-        _sessionContentHost = Panel("", "column", "100%", "auto");
-        _sessionContentHost.Style.Set("flex", "1");
-        _sessionContentHost.Style.Set("min-height", "260px");
-        _sessionContentHost.Style.Set("gap", "0");
-        _sessionContentHost.Children.Add(BuildEmptyState(
-            "打开一个远程会话",
-            "双击左侧连接或选择后点击连接。每个会话都有独立终端、命令草稿和 SFTP 状态。"));
-        center.Children.Add(_sessionContentHost);
-        center.Children.Add(BuildBottomPanel());
-
-        _rightSidebar = BuildInspectorSidebar();
-        _rightSplitter = BuildVerticalSplitter(_rightSidebar, 332, 286, 460, reversed: true);
-
-        body.Children.Add(_leftSidebar);
-        body.Children.Add(_leftSplitter);
-        body.Children.Add(center);
-        body.Children.Add(_rightSplitter);
-        body.Children.Add(_rightSidebar);
-        root.Children.Add(body);
-        root.Children.Add(BuildStatusBar());
+        ConfigureWorkspacePage(page);
+        RebuildConnectionTree();
         RenderActiveSession();
         if (_window is not null) ApplyResponsiveLayout(_window.ClientSize);
-        return root;
+        return page;
     }
 
-    private View BuildTopBar()
+    private void ConfigureWorkspacePage(WorkspacePage page)
     {
-        var top = Panel("", "row", "100%", "44px");
-        top.ClassList.Add("top-bar");
-        top.Style.Set("align-items", "center");
-        top.Style.Set("gap", "8px");
+        ConfigureFontIcon(page.ConnectionHeaderIcon, FluentGlyphs.Connect, "#8fb6ff", 16);
+        ConfigureFontIcon(page.CommandPanelIcon, FluentGlyphs.CommandPrompt, "#8fb6ff", 16);
+        ConfigureFontIcon(page.SessionTabStatusIcon, FluentGlyphs.Connect, "#718096", 14);
+        ConfigureFontIcon(page.RightPanelIcon, FluentGlyphs.History, "#8fb6ff", 16);
+        page.LeftSplitter.ZIndex = 1000;
+        page.RightSplitter.ZIndex = 1000;
+        page.BrokerStatus.Tooltip = "仅当前用户可访问的本地 MCP Broker 正在运行";
 
-        top.Children.Add(BuildMenuBar());
-        var spacer = Panel("", "row", "auto", "1px");
-        spacer.Style.Set("flex", "1");
-        top.Children.Add(spacer);
-
-        var broker = Caption("MCP  LOCAL", "#7ee2ae", "28px", "6px 11px");
-        broker.ClassList.Add("status-chip");
-        broker.Tooltip = "仅当前用户可访问的本地 MCP Broker 正在运行";
-        top.Children.Add(broker);
-        return top;
-    }
-
-    private MenuBar BuildMenuBar()
-    {
-        var menuBar = new MenuBar();
-        menuBar.ClassList.Add("top-menu");
-        menuBar.Style.Set("width", "280px");
-        menuBar.Style.Set("height", "32px");
-
-        menuBar.Children.Add(MenuGroup("会话",
-            MenuCommand("连接所选会话", RequestConnect),
-            MenuCommand("断开当前会话", RequestDisconnect),
-            new MenuSeparator(),
-            MenuCommand("退出", () => _window?.Close())));
-        menuBar.Children.Add(MenuGroup("视图",
-            MenuCommand("连接侧栏", ToggleLeftSidebar),
-            MenuCommand("检查器侧栏", ToggleRightSidebar),
-            MenuCommand("快速发送面板", () => TogglePanel(_bottomPanel))));
-        menuBar.Children.Add(MenuGroup("工具",
-            MenuCommand("刷新远程目录", () => _ = RefreshSftpAsync()),
-            MenuCommand("恢复已移除连接", RestoreHiddenConnections),
-            MenuCommand("检测所选主机 VNC", () => _ = ProbeVncAsync()),
-            MenuCommand("启动所选主机 RDP", LaunchRdp)));
-        menuBar.Children.Add(MenuGroup("帮助",
-            MenuCommand("关于 TermSquared", () => _ = SetStatusAsync(
-                "TermSquared - 安全优先的远程连接工作台", "#a8c7ff"))));
-        return menuBar;
-    }
-
-    private View BuildConnectionSidebar()
-    {
-        var sidebar = Panel("", "column", "276px", "100%");
-        sidebar.ClassList.Add("sidebar");
-        sidebar.ClassList.Add("sidebar-left");
-        sidebar.Style.Set("gap", "0");
-        sidebar.Children.Add(PanelHeader(FluentGlyphs.Connect, "连接", "SSH 配置"));
-
-        var filterArea = Panel("", "column", "100%", "56px");
-        filterArea.Style.Set("padding", "10px 12px");
-        filterArea.Style.Set("gap", "0");
-        _connectionFilter = RdpInput("按名称、主机或用户筛选", "");
-        _connectionFilter.Tooltip = $"配置来源: {_configPath}";
-        _connectionFilter.AddEventListener(StandardEvents.Input, ApplyConnectionFilter);
-        filterArea.Children.Add(_connectionFilter);
-        sidebar.Children.Add(filterArea);
-
-        var treeToolbar = Panel("", "row", "100%", "34px");
-        treeToolbar.ClassList.Add("tree-toolbar");
-        treeToolbar.Style.Set("padding", "2px 10px");
-        treeToolbar.Style.Set("gap", "6px");
-        treeToolbar.Children.Add(TreeActionButton("新增", () => _ = CreateConnectionAsync()));
-        treeToolbar.Children.Add(TreeActionButton("编辑", () => _ = EditSelectedConnectionAsync()));
-        treeToolbar.Children.Add(IconButton(FluentGlyphs.NewFolder, "新建连接文件夹", () => _ = CreateConnectionFolderAsync()));
-        treeToolbar.Children.Add(IconButton(FluentGlyphs.More, "所选项菜单", OpenSelectedConnectionMenu));
-        sidebar.Children.Add(treeToolbar);
-
-        _connectionTree = new Tree();
-        _connectionTree.ClassList.Add("connection-tree");
-        _connectionTree.Style.Set("flex", "1");
-        _connectionTree.Style.Set("min-height", "0");
-        _connectionTree.Style.Set("padding", "4px 8px 12px 8px");
-        _connectionTree.AddEventListener(StandardEvents.SelectionChange, SelectConnectionTreeItem);
-        _connectionTree.AddEventListener<PointerEvent>(StandardEvents.ContextMenu, OpenConnectionContextMenu);
-        _connectionTree.AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
+        page.ConnectMenuItem.Command = _ => RequestConnect();
+        page.DisconnectMenuItem.Command = _ => RequestDisconnect();
+        page.ExitMenuItem.Command = _ => _window?.Close();
+        page.ToggleLeftMenuItem.Command = _ => ToggleLeftSidebar();
+        page.ToggleRightMenuItem.Command = _ => ToggleRightSidebar();
+        page.ToggleBottomMenuItem.Command = _ => TogglePanel(_bottomPanel);
+        page.RefreshRemoteMenuItem.Command = item => { _ = RefreshSftpAsync(); };
+        page.RestoreConnectionsMenuItem.Command = _ => RestoreHiddenConnections();
+        page.ProbeVncMenuItem.Command = item => { _ = ProbeVncAsync(); };
+        page.LaunchRdpMenuItem.Command = _ => LaunchRdp();
+        page.AboutMenuItem.Command = item =>
         {
-            if (e.KeyCode == 13 && _connectionTree.SelectedItem is ConnectionProfileTreeItem profileItem)
+            _ = SetStatusAsync("TermSquared - 安全优先的远程连接工作台", "#a8c7ff");
+        };
+
+        page.ConnectionFilter.Tooltip = $"配置来源: {_configPath}";
+        page.ConnectionFilter.AddEventListener(StandardEvents.Input, ApplyConnectionFilter);
+        page.AddConnectionButton.AddEventListener(StandardEvents.Click, () => _ = CreateConnectionAsync());
+        page.EditConnectionButton.AddEventListener(StandardEvents.Click, () => _ = EditSelectedConnectionAsync());
+        ConfigureIconButton(page.NewFolderButton, FluentGlyphs.NewFolder, "新建连接文件夹",
+            () => _ = CreateConnectionFolderAsync());
+        ConfigureIconButton(page.ConnectionMoreButton, FluentGlyphs.More, "所选项菜单",
+            OpenSelectedConnectionMenu);
+
+        page.ConnectionTree.AddEventListener(StandardEvents.SelectionChange, SelectConnectionTreeItem);
+        page.ConnectionTree.AddEventListener<PointerEvent>(StandardEvents.ContextMenu, OpenConnectionContextMenu);
+        page.ConnectionTree.AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
+        {
+            if (e.KeyCode == 13 && page.ConnectionTree.SelectedItem is ConnectionProfileTreeItem profileItem)
             {
                 e.PreventDefault();
                 _ = OpenSessionAsync(profileItem.Profile);
@@ -252,206 +210,65 @@ internal sealed class AppController : IDisposable
                 OpenSelectedConnectionMenu();
             }
         });
-        sidebar.Children.Add(_connectionTree);
-        _connectionEmptyState = Caption("", "#718096");
-        _connectionEmptyState.Style.Set("padding", "14px");
-        sidebar.Children.Add(_connectionEmptyState);
-        RebuildConnectionTree();
-        return sidebar;
-    }
 
-    private View BuildSessionTabs()
-    {
-        var tabs = Panel("", "row", "100%", "42px");
-        tabs.ClassList.Add("session-tabs");
-        tabs.Style.Set("padding", "4px 8px 0 8px");
-        tabs.Style.Set("align-items", "flex-end");
-        tabs.Style.Set("gap", "6px");
+        ConfigureIconButton(page.ConnectButton, FluentGlyphs.Connect, "连接或重新连接当前选择的 SSH 配置",
+            RequestConnect, "button-primary");
+        ConfigureIconButton(page.DisconnectButton, FluentGlyphs.Disconnect, "安全关闭当前终端和 SFTP 会话",
+            RequestDisconnect, "button-danger");
+        ConfigureIconButton(page.RefreshFilesButton, FluentGlyphs.Refresh, "读取远程根目录",
+            () => _ = RefreshSftpAsync());
 
-        _sessionTabsHost = Panel("", "row", "auto", "38px");
-        _sessionTabsHost.Style.Set("gap", "4px");
-        tabs.Children.Add(_sessionTabsHost);
-        var status = Panel("", "row", "auto", "38px");
-        status.Style.Set("flex", "1");
-        status.Style.Set("align-items", "center");
-        status.Style.Set("gap", "7px");
-        _sessionTabStatusIcon = FluentIcon(FluentGlyphs.Connect, "#718096", 14);
-        status.Children.Add(_sessionTabStatusIcon);
-        _sessionTabStatus = Caption("选择左侧连接后建立会话", "#718096");
-        _sessionTabStatus.Style.Set("flex", "1");
-        status.Children.Add(_sessionTabStatus);
-        tabs.Children.Add(status);
-        return tabs;
-    }
-
-    private View BuildTerminalToolbar()
-    {
-        var toolbar = Panel("", "row", "100%", "48px");
-        toolbar.ClassList.Add("workspace-toolbar");
-        toolbar.Style.Set("padding", "7px 10px");
-        toolbar.Style.Set("align-items", "center");
-        toolbar.Style.Set("gap", "8px");
-        _connectButton = IconButton(FluentGlyphs.Connect, "连接", RequestConnect, "button-primary");
-        _connectButton.Tooltip = "连接或重新连接当前选择的 SSH 配置";
-        _disconnectButton = IconButton(FluentGlyphs.Disconnect, "断开", RequestDisconnect, "button-danger");
-        _disconnectButton.Tooltip = "安全关闭当前终端和 SFTP 会话";
-        _refreshFilesButton = IconButton(FluentGlyphs.Refresh, "刷新文件", () => _ = RefreshSftpAsync());
-        _refreshFilesButton.Tooltip = "读取远程根目录";
-        toolbar.Children.Add(_connectButton);
-        toolbar.Children.Add(_disconnectButton);
-        toolbar.Children.Add(_refreshFilesButton);
-        _protocolToolsHost = Panel("", "row", "auto", "30px");
-        _protocolToolsHost.Style.Set("gap", "6px");
-        toolbar.Children.Add(_protocolToolsHost);
-        var hint = Caption("终端输入会直接发送到活动 SSH Shell", "#8290a3");
-        hint.Style.Set("flex", "1");
-        toolbar.Children.Add(hint);
-        return toolbar;
-    }
-
-    private View BuildBottomPanel()
-    {
-        _bottomPanel = Panel("", "column", "100%", "auto");
-        _bottomPanel.ClassList.Add("bottom-panel");
-        _bottomPanel.Style.Set("gap", "0");
-        var titleRow = Panel("", "row", "100%", "38px");
-        titleRow.ClassList.Add("command-panel-header");
-        titleRow.Style.Set("padding", "4px 8px 4px 10px");
-        titleRow.Style.Set("align-items", "center");
-        titleRow.Style.Set("gap", "7px");
-        titleRow.Children.Add(FluentIcon(FluentGlyphs.CommandPrompt, "#8fb6ff", 16));
-        var title = Caption("命令编辑与发送", "#dfe7f2");
-        title.Style.Set("font-weight", "700");
-        title.Style.Set("flex", "1");
-        titleRow.Children.Add(title);
-        _sendButton = IconButton(FluentGlyphs.Send, "发送全部", SendCommands, "icon-button-primary");
-        _clearCommandsButton = IconButton(FluentGlyphs.Delete, "清空命令", () =>
+        ConfigureIconButton(page.SendButton, FluentGlyphs.Send, "发送全部", SendCommands, "icon-button-primary");
+        ConfigureIconButton(page.ClearCommandsButton, FluentGlyphs.Delete, "清空命令", () =>
         {
-            if (_commandEditor is not null) _commandEditor.Value = "";
+            page.CommandEditor.Value = "";
         });
-        _expandCommandsButton = IconButton(FluentGlyphs.ChevronUp, "展开命令面板", ToggleCommandPanelExpanded);
-        titleRow.Children.Add(_sendButton);
-        titleRow.Children.Add(_clearCommandsButton);
-        titleRow.Children.Add(_expandCommandsButton);
-        _bottomPanel.Children.Add(titleRow);
+        ConfigureIconButton(page.ExpandCommandsButton, FluentGlyphs.ChevronUp, "展开命令面板",
+            ToggleCommandPanelExpanded);
 
-        _commandPanelBody = Panel("", "column", "100%", "150px");
-        _commandPanelBody.Style.Set("padding", "0 10px 8px 10px");
-        _commandPanelBody.Style.Set("gap", "6px");
-        _commandEditor = new CodeEditor
-        {
-            Placeholder = "输入一行或多行命令。每行将依次发送到当前 SSH Shell。",
-            Language = "plaintext",
-            ThemeId = "default-dark",
-            ShowLineNumbers = true,
-            ShowGlyphMargin = false,
-            ShowFolding = false,
-            ShowOverviewRuler = false,
-            ShowScrollBars = true,
-            WordWrap = true
-        };
-        _commandEditor.ClassList.Add("command-editor");
-        _commandEditor.Style.Set("flex", "1");
-        _commandEditor.Style.Set("min-width", "0");
-        _commandEditor.AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
+        page.CommandEditor.Placeholder = "输入一行或多行命令。每行将依次发送到当前 SSH Shell。";
+        page.CommandEditor.Language = "plaintext";
+        page.CommandEditor.ThemeId = "default-dark";
+        page.CommandEditor.ShowLineNumbers = true;
+        page.CommandEditor.ShowGlyphMargin = false;
+        page.CommandEditor.ShowFolding = false;
+        page.CommandEditor.ShowOverviewRuler = false;
+        page.CommandEditor.ShowScrollBars = true;
+        page.CommandEditor.WordWrap = true;
+        page.CommandEditor.AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
         {
             if (e.KeyCode != 13 || !e.ControlKey) return;
-            _commandTextBeforeShortcut = _commandEditor.Value;
+            _commandTextBeforeShortcut = page.CommandEditor.Value;
             _commandShortcutSessionId = _activeSessionId;
             e.PreventDefault();
             SendCommands();
         });
-        _commandEditor.AddEventListener(StandardEvents.Input, () =>
+        page.CommandEditor.AddEventListener(StandardEvents.Input, () =>
         {
             if (_commandTextBeforeShortcut is null) return;
             if (_commandShortcutSessionId == _activeSessionId)
-                _commandEditor.Value = _commandTextBeforeShortcut;
+                page.CommandEditor.Value = _commandTextBeforeShortcut;
             _commandTextBeforeShortcut = null;
             _commandShortcutSessionId = null;
         });
-        _commandPanelBody.Children.Add(_commandEditor);
-        var footer = Panel("", "row", "100%", "18px");
-        footer.Style.Set("align-items", "center");
-        var helper = Caption("Ctrl+Enter 发送全部  |  命令内容不会写入应用日志", "#718096");
-        helper.Style.Set("flex", "1");
-        footer.Children.Add(helper);
-        _commandPanelBody.Children.Add(footer);
-        _bottomPanel.Children.Add(_commandPanelBody);
-        _bottomPanel.IsVisible = false;
-        SetCommandPanelExpanded(false);
-        return _bottomPanel;
-    }
 
-    private View BuildInspectorSidebar()
-    {
-        var sidebar = Panel("", "column", "332px", "100%");
-        sidebar.ClassList.Add("sidebar");
-        sidebar.ClassList.Add("sidebar-right");
-        sidebar.Style.Set("gap", "0");
+        ConfigureSplitter(page.LeftSplitter, page.LeftSidebar, page.LeftSidebarRoot, 276, 230, 420);
+        ConfigureSplitter(page.RightSplitter, page.RightSidebar, page.RightSidebarRoot, 332, 286, 460, reversed: true);
 
-        var header = ContextPanelHeader(FluentGlyphs.History, "历史记录", "本次运行");
-        sidebar.Children.Add(header);
-
-        var content = Panel("", "column", "100%", "auto");
-        content.Style.Set("flex", "1");
-        content.Style.Set("min-height", "0");
-        content.Style.Set("gap", "0");
-
-        _historyPanel = BuildHistoryPanel();
-        _sftpPanel = BuildSftpPanel();
-        _securityPanel = BuildSecurityPanel();
-        content.Children.Add(_historyPanel);
-        content.Children.Add(_sftpPanel);
-        content.Children.Add(_securityPanel);
-        sidebar.Children.Add(content);
-        ShowHistoryContext();
-        return sidebar;
-    }
-
-    private View BuildHistoryPanel()
-    {
-        var panel = Panel("", "column", "100%", "100%");
-        panel.Style.Set("gap", "0");
-        var scroll = new ScrollViewer();
-        scroll.Style.Set("flex", "1");
-        scroll.Style.Set("min-height", "0");
-        scroll.Style.Set("padding", "12px");
-        _historyItems = Panel("", "column", "100%", "auto");
-        _historyItems.Style.Set("gap", "8px");
-        _historyItems.Children.Add(BuildEmptyState("暂无连接历史", "连接会话后，这里会记录目标和连接结果。"));
-        scroll.Children.Add(_historyItems);
-        panel.Children.Add(scroll);
-        return panel;
-    }
-
-    private View BuildSftpPanel()
-    {
-        var panel = Panel("", "column", "100%", "100%");
-        panel.Style.Set("gap", "0");
-        var pathBar = Panel("", "row", "100%", "44px");
-        pathBar.ClassList.Add("sftp-path-bar");
-        pathBar.Style.Set("padding", "6px 8px 6px 12px");
-        pathBar.Style.Set("align-items", "center");
-        _sftpPathText = Caption("/", "#dfe7f2");
-        _sftpPathText.Style.Set("flex", "1");
-        pathBar.Children.Add(_sftpPathText);
-        pathBar.Children.Add(IconButton(FluentGlyphs.NewFolder, "新建远程目录", () => _ = CreateRemoteDirectoryAsync()));
-        pathBar.Children.Add(IconButton(FluentGlyphs.Upload, "上传本地文件", () => _ = UploadRemoteFileAsync()));
-        pathBar.Children.Add(IconButton(FluentGlyphs.More, "所选文件菜单", OpenSelectedSftpMenu));
-        pathBar.Children.Add(IconButton(FluentGlyphs.Refresh, "刷新 SFTP", () => _ = RefreshSftpAsync()));
-        panel.Children.Add(pathBar);
-        _sftpTree = new Tree();
-        _sftpTree.ClassList.Add("sftp-tree");
-        _sftpTree.Style.Set("flex", "1");
-        _sftpTree.Style.Set("min-height", "0");
-        _sftpTree.Style.Set("padding", "6px 8px 12px 8px");
-        _sftpTree.AddEventListener(StandardEvents.SelectionChange, SelectSftpTreeItem);
-        _sftpTree.AddEventListener("expand", e =>
+        ConfigureIconButton(page.NewRemoteFolderButton, FluentGlyphs.NewFolder, "新建远程目录",
+            () => _ = CreateRemoteDirectoryAsync());
+        ConfigureIconButton(page.UploadRemoteFileButton, FluentGlyphs.Upload, "上传本地文件",
+            () => _ = UploadRemoteFileAsync());
+        ConfigureIconButton(page.SftpMoreButton, FluentGlyphs.More, "所选文件菜单", OpenSelectedSftpMenu);
+        ConfigureIconButton(page.RefreshSftpButton, FluentGlyphs.Refresh, "刷新 SFTP",
+            () => _ = RefreshSftpAsync());
+        page.SftpTree.AddEventListener(StandardEvents.SelectionChange, SelectSftpTreeItem);
+        page.SftpTree.AddEventListener("expand", e =>
         {
             if (e.Target is SftpTreeItem item) _ = EnsureSftpChildrenAsync(item);
         });
-        _sftpTree.AddEventListener<PointerEvent>(StandardEvents.ContextMenu, OpenSftpContextMenu);
-        _sftpTree.AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
+        page.SftpTree.AddEventListener<PointerEvent>(StandardEvents.ContextMenu, OpenSftpContextMenu);
+        page.SftpTree.AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
         {
             if (e.KeyCode == 93 || e.ShiftKey && e.KeyCode == 121)
             {
@@ -459,82 +276,67 @@ internal sealed class AppController : IDisposable
                 OpenSelectedSftpMenu();
             }
         });
-        panel.Children.Add(_sftpTree);
-        return panel;
-    }
 
-    private View BuildStatusBar()
-    {
-        var status = Panel("", "row", "100%", "30px");
-        status.ClassList.Add("status-bar");
-        status.Style.Set("padding", "6px 12px");
-        status.Style.Set("align-items", "center");
-        _sessionStatus = Caption("就绪 - 请选择连接", "#9aa7b8");
-        _sessionStatus.Style.Set("flex", "1");
-        status.Children.Add(_sessionStatus);
-        status.Children.Add(Caption("UTF-8   |   MCP 本地代理   |   严格主机密钥", "#718096"));
-        return status;
-    }
-
-    private View BuildSecurityPanel()
-    {
-        var panel = Panel("", "column", "100%", "100%");
-        panel.Style.Set("padding", "12px");
-        panel.Style.Set("gap", "10px");
-        _details = Caption("选择连接后，这里会显示目标地址与主机密钥状态。", "#9aa7b8");
-        _details.Style.Set("white-space", "pre-wrap");
-        panel.Children.Add(_details);
-
-        _hostKeyApproval = Panel("", "column", "100%", "auto");
-        _hostKeyApproval.ClassList.Add("warning-surface");
-        _hostKeyApproval.Style.Set("padding", "12px");
-        _hostKeyApproval.Style.Set("gap", "9px");
-        var warning = Caption("需要确认未知主机密钥", "#f6c66b");
-        warning.Style.Set("font-weight", "700");
-        _hostKeyApproval.Children.Add(warning);
-        _trustOnceButton = ActionButton("仅本次信任并连接", () => _ = ConnectPendingAsync(HostKeyDecision.TrustOnce));
-        _trustStoreButton = ActionButton("信任并保存此密钥", () => _ = ConnectPendingAsync(HostKeyDecision.TrustAndStore), className: "button-primary");
-        _hostKeyApproval.Children.Add(_trustOnceButton);
-        _hostKeyApproval.Children.Add(_trustStoreButton);
-        panel.Children.Add(_hostKeyApproval);
+        page.TrustOnceButton.AddEventListener(StandardEvents.Click,
+            () => _ = ConnectPendingAsync(HostKeyDecision.TrustOnce));
+        page.TrustStoreButton.AddEventListener(StandardEvents.Click,
+            () => _ = ConnectPendingAsync(HostKeyDecision.TrustAndStore));
+        page.BottomPanel.IsVisible = false;
+        SetCommandPanelExpanded(false);
         SetTrustButtons(false);
-        return panel;
+        ShowHistoryContext();
     }
 
-    private static View PanelHeader(string glyph, string title, string subtitle)
+    private static void ConfigureSplitter(
+        Splitter splitter,
+        Element panel,
+        View panelContent,
+        float value,
+        float minimum,
+        float maximum,
+        bool reversed = false)
     {
-        var header = Panel("", "row", "100%", "48px");
-        header.ClassList.Add("panel-header");
-        header.Style.Set("padding", "8px 12px");
-        header.Style.Set("align-items", "center");
-        header.Style.Set("gap", "8px");
-        header.Children.Add(FluentIcon(glyph, "#8fb6ff", 16));
-        var label = Caption(title, "#e7edf5");
-        label.ClassList.Add("panel-title");
-        label.Style.Set("font-size", "14px");
-        label.Style.Set("flex", "1");
-        header.Children.Add(label);
-        header.Children.Add(Caption(subtitle, "#718096"));
-        return header;
+        splitter.Minimum = minimum;
+        splitter.Maximum = maximum;
+        splitter.Value = value;
+        splitter.IsVertical = true;
+        splitter.IsReversed = reversed;
+        void ApplyWidth(float widthValue)
+        {
+            var width = widthValue.ToString("0", CultureInfo.InvariantCulture) + "px";
+            panel.Style.Set("width", width);
+            panelContent.Style.Set("width", width);
+            var overlayOffset = (widthValue - 2).ToString("0", CultureInfo.InvariantCulture) + "px";
+            splitter.Style.Set(reversed ? "right" : "left", overlayOffset);
+        }
+        ApplyWidth(value);
+        splitter.AddEventListener(StandardEvents.Input, () => ApplyWidth(splitter.Value));
     }
 
-    private View ContextPanelHeader(string glyph, string title, string subtitle)
+    private static void ConfigureIconButton(
+        Button button,
+        string glyph,
+        string tooltip,
+        Action action,
+        string? className = null)
     {
-        var header = Panel("", "row", "100%", "48px");
-        header.ClassList.Add("panel-header");
-        header.Style.Set("padding", "8px 12px");
-        header.Style.Set("align-items", "center");
-        header.Style.Set("gap", "8px");
-        _rightPanelIcon = FluentIcon(glyph, "#8fb6ff", 16);
-        header.Children.Add(_rightPanelIcon);
-        _rightPanelTitle = Caption(title, "#e7edf5");
-        _rightPanelTitle.ClassList.Add("panel-title");
-        _rightPanelTitle.Style.Set("font-size", "14px");
-        _rightPanelTitle.Style.Set("flex", "1");
-        header.Children.Add(_rightPanelTitle);
-        _rightPanelSubtitle = Caption(subtitle, "#718096");
-        header.Children.Add(_rightPanelSubtitle);
-        return header;
+        button.TextContent = glyph;
+        button.ClassList.Add("icon-button");
+        if (!string.IsNullOrWhiteSpace(className)) button.ClassList.Add(className);
+        button.Style.Set("font-family", "'Segoe Fluent Icons', 'Segoe MDL2 Assets'");
+        button.Style.Set("font-size", "16px");
+        button.Tooltip = tooltip;
+        button.AddEventListener(StandardEvents.Click, action);
+    }
+
+    private static void ConfigureFontIcon(FontIcon icon, string glyph, string color, float size)
+    {
+        icon.Glyph = glyph;
+        icon.FontFamily = "Segoe Fluent Icons";
+        icon.FontSize = size;
+        icon.Style.Set("color", color);
+        icon.Style.Set("width", size.ToString("0", CultureInfo.InvariantCulture) + "px");
+        icon.Style.Set("height", size.ToString("0", CultureInfo.InvariantCulture) + "px");
     }
 
     private static View BuildEmptyState(string title, string description)
@@ -831,23 +633,6 @@ internal sealed class AppController : IDisposable
         for (var current = element; current is not null; current = current.Parent)
             if (current is T typed) return typed;
         return null;
-    }
-
-    private static Splitter BuildVerticalSplitter(View panel, float value, float minimum, float maximum, bool reversed = false)
-    {
-        var splitter = new Splitter
-        {
-            Value = value,
-            Minimum = minimum,
-            Maximum = maximum,
-            IsVertical = true,
-            IsReversed = reversed
-        };
-        splitter.ClassList.Add("splitter");
-        splitter.Style.Set("width", "4px");
-        splitter.AddEventListener(StandardEvents.Input, () =>
-            panel.Style.Set("width", splitter.Value.ToString("0", CultureInfo.InvariantCulture) + "px"));
-        return splitter;
     }
 
     private void SendCommands()
@@ -1948,7 +1733,7 @@ internal sealed class AppController : IDisposable
             _ = OpenSessionAsync(_selectedProfile);
     }
 
-    private static void TogglePanel(View? panel, Splitter? splitter = null)
+    private static void TogglePanel(Element? panel, Splitter? splitter = null)
     {
         if (panel is null) return;
         panel.IsVisible = !panel.IsVisible;
@@ -1979,21 +1764,13 @@ internal sealed class AppController : IDisposable
 
     private void ApplyResponsiveLayout(Square.Graphics.Size size)
     {
+        if (size.Width <= 0 || size.Height <= 0) return;
         var showLeft = _leftSidebarRequested && size.Width >= 760;
         var showRight = _rightSidebarRequested && size.Width >= 1180;
         if (_leftSidebar is not null) _leftSidebar.IsVisible = showLeft;
         if (_leftSplitter is not null) _leftSplitter.IsVisible = showLeft;
         if (_rightSidebar is not null) _rightSidebar.IsVisible = showRight;
         if (_rightSplitter is not null) _rightSplitter.IsVisible = showRight;
-    }
-
-    private static MenuItem MenuGroup(string title, params UIElement[] children)
-    {
-        var item = new MenuItem { TextContent = title };
-        var menu = new Menu();
-        foreach (var child in children) menu.Children.Add(child);
-        item.Children.Add(menu);
-        return item;
     }
 
     private static MenuItem MenuCommand(string title, Action action) => new()
@@ -2041,30 +1818,6 @@ internal sealed class AppController : IDisposable
         button.Style.Set("font-size", "16px");
         button.Tooltip = tooltip;
         return button;
-    }
-
-    private static Button TreeActionButton(string text, Action action)
-    {
-        var button = ActionButton(text, action, compact: true, className: "tree-action");
-        button.Style.Set("width", "54px");
-        return button;
-    }
-
-    private static FontIcon FluentIcon(string glyph, string color, float size)
-    {
-        var icon = new FontIcon("Segoe Fluent Icons", glyph) { FontSize = size };
-        icon.ClassList.Add("fluent-icon");
-        icon.Style.Set("color", color);
-        icon.Style.Set("width", size.ToString("0", CultureInfo.InvariantCulture) + "px");
-        icon.Style.Set("height", size.ToString("0", CultureInfo.InvariantCulture) + "px");
-        return icon;
-    }
-
-    private static Input RdpInput(string placeholder, string value, string type = "text")
-    {
-        var input = new Input { Placeholder = placeholder, Value = value, Type = type };
-        input.Style.Set("width", "100%");
-        return input;
     }
 
     private static View Panel(string background, string direction, string width, string height)

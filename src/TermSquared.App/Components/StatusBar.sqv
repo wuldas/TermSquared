@@ -1,0 +1,13 @@
+<template>
+  <View ref="Root" class="status-bar">
+    <Text ref="SessionStatus" class="session-status" text="就绪 - 请选择连接" />
+    <Text class="status-bar-info" text="UTF-8   |   MCP 本地代理   |   严格主机密钥" />
+  </View>
+</template>
+<script lang="csharp" namespace="TermSquared.App.Components" name="StatusBar" access="internal">
+</script>
+<style>
+  .status-bar { display: flex; flex-direction: row; align-items: center; width: 100%; height: 30px; padding: 6px 12px; }
+  .session-status { flex: 1; color: #9aa7b8; }
+  .status-bar-info { color: #718096; }
+</style>

@@ -1,0 +1,17 @@
+<template>
+  <View ref="Root" class="workspace-toolbar">
+    <Button ref="ConnectButton" class="icon-button button-primary" text="" />
+    <Button ref="DisconnectButton" class="icon-button button-danger" text="" />
+    <Button ref="RefreshFilesButton" class="icon-button" text="" />
+    <View ref="ProtocolToolsHost" class="protocol-tools-host" />
+    <Text class="toolbar-hint" text="终端输入会直接发送到活动 SSH Shell" />
+  </View>
+</template>
+<script lang="csharp" namespace="TermSquared.App.Components" name="TerminalToolbar" access="internal">
+</script>
+<style>
+  .workspace-toolbar { display: flex; flex-direction: row; align-items: center; width: 100%; height: 48px; padding: 7px 10px; gap: 8px; }
+  .icon-button { width: 34px; height: 30px; padding: 0; font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets'; font-size: 16px; }
+  .protocol-tools-host { display: flex; flex-direction: row; width: auto; height: 30px; gap: 6px; }
+  .toolbar-hint { flex: 1; color: #8290a3; }
+</style>
