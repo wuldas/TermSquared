@@ -69,16 +69,13 @@ internal static class AppTheme
           background: #10161e;
         }
 
-        .sidebar-left {
-          border-right: 1px solid #253040;
-        }
-
-        .sidebar-right {
-          border-left: 1px solid #253040;
-        }
-
         .panel-header {
-          background: #131a24;
+          background: #10161e;
+          border-bottom: 1px solid #253040;
+        }
+
+        .session-tabs {
+          background: #10161e;
           border-bottom: 1px solid #253040;
         }
 
@@ -419,7 +416,7 @@ internal static class AppTheme
         }
 
         .splitter {
-          background: #0b0f14;
+          background: #10161e;
         }
 
         .splitter:hover,

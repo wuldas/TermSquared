@@ -59,6 +59,7 @@ internal sealed class AppController : IDisposable
     private Text? _details;
     private Text? _sftpPathText;
     private Text? _sessionTabStatus;
+    private View? _sessionTabStatusHost;
     private Text? _rightPanelTitle;
     private Text? _rightPanelSubtitle;
     private FontIcon? _sessionTabStatusIcon;
@@ -140,6 +141,7 @@ internal sealed class AppController : IDisposable
         _details = page.Details;
         _sftpPathText = page.SftpPathText;
         _sessionTabStatus = page.SessionTabStatus;
+        _sessionTabStatusHost = page.SessionTabStatusHost;
         _rightPanelTitle = page.RightPanelTitle;
         _rightPanelSubtitle = page.RightPanelSubtitle;
         _sessionTabStatusIcon = page.SessionTabStatusIcon;
@@ -167,6 +169,7 @@ internal sealed class AppController : IDisposable
         ConfigureFontIcon(page.CommandPanelIcon, FluentGlyphs.CommandPrompt, "#8fb6ff", 16);
         ConfigureFontIcon(page.SessionTabStatusIcon, FluentGlyphs.Connect, "#718096", 14);
         ConfigureFontIcon(page.RightPanelIcon, FluentGlyphs.History, "#8fb6ff", 16);
+        page.SessionTabStatusHost.IsVisible = false;
         page.LeftSplitter.ZIndex = 1000;
         page.RightSplitter.ZIndex = 1000;
         page.BrokerStatus.Tooltip = "仅当前用户可访问的本地 MCP Broker 正在运行";
@@ -1054,6 +1057,7 @@ internal sealed class AppController : IDisposable
         RenderProtocolTools(session);
         if (session is null)
         {
+            if (_sessionTabStatusHost is not null) _sessionTabStatusHost.IsVisible = false;
             SetText(_sessionTabStatus, "选择左侧连接后建立会话", "#718096");
             SetText(_sessionStatus, "就绪 - 请选择连接", "#9aa7b8");
             SetTrustButtons(false);
@@ -1065,6 +1069,7 @@ internal sealed class AppController : IDisposable
 
     private void RenderSession(WorkspaceSession session)
     {
+        if (_sessionTabStatusHost is not null) _sessionTabStatusHost.IsVisible = true;
         UpdateSessionTab(session);
         if (_activeSessionId != session.Id) return;
         var connected = session.State == SessionState.Connected;

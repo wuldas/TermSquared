@@ -44,7 +44,7 @@
   .sidebar-right { width: 332px; }
   .panel-header { display: flex; flex-direction: row; align-items: center; width: 100%; height: 48px; padding: 8px 12px; gap: 8px; }
   .panel-title { flex: 1; color: #e7edf5; font-size: 14px; }
-  .panel-subtitle { color: #718096; }
+  .panel-subtitle { flex-shrink: 0; color: #718096; white-space: nowrap; }
   .right-panel-content { display: flex; flex: 1; flex-direction: column; width: 100%; height: auto; min-height: 0; gap: 0; }
   .right-context-panel { display: flex; flex: 1; flex-direction: column; width: 100%; height: 100%; gap: 0; }
   .history-scroll { display: flex; flex: 1; min-height: 0; padding: 12px; }
