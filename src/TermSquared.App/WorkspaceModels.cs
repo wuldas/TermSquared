@@ -28,10 +28,47 @@ internal static class WorkspaceRestorePlanner
 {
     public static IReadOnlyList<WorkspaceRestoreEntry> Create(
         IReadOnlyList<OpenSessionSettings> sessions,
-        Guid? activeSessionId) =>
-        sessions.Select(settings => new WorkspaceRestoreEntry(
-            settings,
-            activeSessionId is Guid active && settings.SessionId == active)).ToArray();
+        Guid? activeSessionId)
+    {
+        var seen = new HashSet<Guid>();
+        var normalized = sessions
+            .Where(settings => settings.SessionId != Guid.Empty && seen.Add(settings.SessionId))
+            .Select(Normalize)
+            .ToArray();
+        var effectiveActiveId = activeSessionId is Guid active &&
+                                normalized.Any(entry => entry.SessionId == active)
+            ? active
+            : normalized.LastOrDefault()?.SessionId;
+        return normalized
+            .Select(settings => new WorkspaceRestoreEntry(
+                settings,
+                effectiveActiveId is Guid selected && settings.SessionId == selected))
+            .ToArray();
+    }
+
+    private static OpenSessionSettings Normalize(OpenSessionSettings settings)
+    {
+        var activeTool = Enum.IsDefined(settings.ActiveTool)
+            ? settings.ActiveTool
+            : SessionToolKind.Terminal;
+        SessionToolKind? splitTool = settings.SplitTool is { } split &&
+                                     Enum.IsDefined(split) &&
+                                     split != activeTool
+            ? split
+            : null;
+        return settings with
+        {
+            ActiveTool = activeTool,
+            SplitTool = splitTool,
+            SplitWidth = Math.Clamp(settings.SplitWidth, 280, 700)
+        };
+    }
+}
+
+internal static class SessionItemScope
+{
+    public static bool Matches(Guid? activeSessionId, Guid itemSessionId) =>
+        activeSessionId is Guid active && active == itemSessionId;
 }
 
 internal sealed class WorkspaceSession(

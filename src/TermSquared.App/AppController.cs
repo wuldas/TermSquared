@@ -1076,7 +1076,14 @@ internal sealed class AppController : IDisposable
     private void RestoreOpenSessions()
     {
         var plan = WorkspaceRestorePlanner.Create(_workspaceSettings.OpenSessions, _workspaceSettings.ActiveSessionId);
-        if (plan.Count == 0) return;
+        if (plan.Count == 0)
+        {
+            if (_workspaceSettings.OpenSessions.Count > 0)
+                _workspaceSettings.SaveOpenSessions([], null);
+            return;
+        }
+        WorkspaceSession? preferred = null;
+        WorkspaceSession? fallback = null;
         _restoringWorkspace = true;
         try
         {
@@ -1091,15 +1098,21 @@ internal sealed class AppController : IDisposable
                     entry.Settings.ActiveTool,
                     entry.Settings.SplitTool,
                     entry.Settings.SplitWidth);
-                if (entry.ShouldConnect) _restoredActiveSession = session;
+                fallback = session;
+                if (entry.ShouldConnect) preferred = session;
             }
-            if (_workspaceSettings.ActiveSessionId is Guid active && _sessions.ContainsKey(active))
-                ActivateSession(active);
+            var selected = preferred ?? fallback;
+            if (selected is not null)
+            {
+                ActivateSession(selected.Id);
+                _restoredActiveSession = selected;
+            }
         }
         finally
         {
             _restoringWorkspace = false;
         }
+        SaveOpenSessions();
     }
 
     public void ConnectRestoredActiveSession()
@@ -1380,6 +1393,12 @@ internal sealed class AppController : IDisposable
             if (_bottomPanel is not null) _bottomPanel.IsVisible = false;
             if (_toolSplit is not null) _toolSplit.IsVisible = false;
             if (_secondaryToolHost is not null) _secondaryToolHost.IsVisible = false;
+            if (_sftpTree is not null)
+            {
+                _sftpTree.ClearSelection();
+                _sftpTree.Children.Clear();
+            }
+            if (_sftpPathText is not null) _sftpPathText.TextContent = "/";
             SetTrustButtons(false);
             ShowHistoryContext();
             return;
@@ -1401,8 +1420,7 @@ internal sealed class AppController : IDisposable
                 session.ActiveTool = SessionToolKind.SessionInfo;
         }
         else ShowHistoryContext();
-        if (_sftpPathText is not null) _sftpPathText.TextContent = session.CurrentRemotePath;
-        if (connected && !ReferenceEquals(session.SftpRoot?.ParentNode, _sftpTree)) RenderSftpTree(session);
+        RenderSftpTree(session);
         RenderToolLayout(session);
         RenderActiveSessionControls(session);
     }
@@ -1479,12 +1497,31 @@ internal sealed class AppController : IDisposable
         await InvokeUiAsync(() => root.Expand()).ConfigureAwait(false);
     }
 
+    private bool TryGetActiveSftpSession(SftpTreeItem item, out WorkspaceSession workspaceSession)
+    {
+        if (SessionItemScope.Matches(_activeSessionId, item.SessionId) &&
+            _sessions.TryGetValue(item.SessionId, out var session) &&
+            ReferenceEquals(ActiveSession, session))
+        {
+            workspaceSession = session;
+            return true;
+        }
+        workspaceSession = null!;
+        return false;
+    }
+
     private void RenderSftpTree(WorkspaceSession workspaceSession)
     {
         if (_activeSessionId != workspaceSession.Id || _sftpTree is null) return;
-        _sftpTree.Children.Clear();
-        if (workspaceSession.SftpRoot is not null) _sftpTree.Children.Add(workspaceSession.SftpRoot);
-        if (_sftpPathText is not null) _sftpPathText.TextContent = workspaceSession.CurrentRemotePath;
+        var root = workspaceSession.State == SessionState.Connected ? workspaceSession.SftpRoot : null;
+        if (!ReferenceEquals(root?.ParentNode, _sftpTree) || root is null && _sftpTree.Children.Count > 0)
+        {
+            _sftpTree.ClearSelection();
+            _sftpTree.Children.Clear();
+            if (root is not null) _sftpTree.Children.Add(root);
+        }
+        if (_sftpPathText is not null)
+            _sftpPathText.TextContent = root is null ? "/" : workspaceSession.CurrentRemotePath;
     }
 
     private static SftpTreeItem CreateSftpItem(WorkspaceSession workspaceSession, RemoteEntry? entry, string path, string label)
@@ -1535,17 +1572,26 @@ internal sealed class AppController : IDisposable
     private async Task EnsureSftpChildrenAsync(SftpTreeItem item, long? expectedRequestVersion)
     {
         if (item.ChildrenLoaded || item.IsLoading || !item.IsDirectory ||
-            !_sessions.TryGetValue(item.SessionId, out var workspaceSession) || workspaceSession.Transport is not { } transport)
+            !TryGetActiveSftpSession(item, out var workspaceSession) || workspaceSession.Transport is not { } transport)
             return;
         item.IsLoading = true;
         var requestVersion = expectedRequestVersion ?? workspaceSession.SftpRequestVersion;
         try
         {
             var entries = await transport.ListAsync(item.Path, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
-            if (workspaceSession.SftpRequestVersion != requestVersion) return;
+            if (workspaceSession.SftpRequestVersion != requestVersion)
+            {
+                item.IsLoading = false;
+                return;
+            }
             await InvokeUiAsync(() =>
             {
-                if (workspaceSession.SftpRequestVersion != requestVersion) return;
+                if (!SessionItemScope.Matches(_activeSessionId, item.SessionId) ||
+                    workspaceSession.SftpRequestVersion != requestVersion)
+                {
+                    item.IsLoading = false;
+                    return;
+                }
                 foreach (var entry in entries
                              .OrderByDescending(entry => entry.Kind == RemoteEntryKind.Directory)
                              .ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase))
@@ -1568,7 +1614,7 @@ internal sealed class AppController : IDisposable
 
     private void SelectSftpTreeItem()
     {
-        if (_sftpTree?.SelectedItem is not SftpTreeItem item || !_sessions.TryGetValue(item.SessionId, out var workspaceSession)) return;
+        if (_sftpTree?.SelectedItem is not SftpTreeItem item || !TryGetActiveSftpSession(item, out var workspaceSession)) return;
         workspaceSession.SelectedRemoteEntry = item.Entry;
         workspaceSession.CurrentRemotePath = item.IsDirectory ? item.Path : RemoteParent(item.Path);
         if (_sftpPathText is not null) _sftpPathText.TextContent = workspaceSession.CurrentRemotePath;
@@ -1577,7 +1623,9 @@ internal sealed class AppController : IDisposable
     private void OpenSftpContextMenu(PointerEvent e)
     {
         if (_sftpTree is null) return;
-        if (FindAncestor<SftpTreeItem>(e.Target as Element) is { } item) _sftpTree.SelectItem(item);
+        if (FindAncestor<SftpTreeItem>(e.Target as Element) is not { } item ||
+            !SessionItemScope.Matches(_activeSessionId, item.SessionId)) return;
+        _sftpTree.SelectItem(item);
         OpenSelectedSftpMenu(new Point(e.ClientX, e.ClientY));
         e.PreventDefault();
     }
@@ -1586,7 +1634,7 @@ internal sealed class AppController : IDisposable
 
     private void OpenSelectedSftpMenu(Point? position)
     {
-        if (_sftpTree?.SelectedItem is not SftpTreeItem item || !_sessions.TryGetValue(item.SessionId, out var workspaceSession)) return;
+        if (_sftpTree?.SelectedItem is not SftpTreeItem item || !TryGetActiveSftpSession(item, out var workspaceSession)) return;
         var menu = new ContextMenu();
         menu.ClassList.Add("context-menu");
         if (item.IsDirectory)
@@ -1613,6 +1661,7 @@ internal sealed class AppController : IDisposable
 
     private async Task ReloadSftpDirectoryAsync(SftpTreeItem item)
     {
+        if (!SessionItemScope.Matches(_activeSessionId, item.SessionId)) return;
         item.ChildrenLoaded = false;
         item.Children.Clear();
         item.Placeholder = new TreeItem("正在加载...") { IsEnabled = false };
@@ -1667,7 +1716,7 @@ internal sealed class AppController : IDisposable
 
     private async Task DownloadRemoteFileAsync(SftpTreeItem item)
     {
-        if (_root is null || !_sessions.TryGetValue(item.SessionId, out var workspaceSession) ||
+        if (_root is null || !TryGetActiveSftpSession(item, out var workspaceSession) ||
             workspaceSession.Transport is not { } transport || item.Entry is null) return;
         var defaultPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", item.Entry.Name);
         var localPath = await WorkspaceDialogs.PromptAsync(_root, "下载远程文件", defaultPath, "本地保存完整路径");
@@ -1691,7 +1740,7 @@ internal sealed class AppController : IDisposable
 
     private async Task RenameRemoteItemAsync(SftpTreeItem item)
     {
-        if (_root is null || item.Entry is null || !_sessions.TryGetValue(item.SessionId, out var workspaceSession) ||
+        if (_root is null || item.Entry is null || !TryGetActiveSftpSession(item, out var workspaceSession) ||
             workspaceSession.Transport is not { } transport) return;
         var destination = await WorkspaceDialogs.PromptAsync(_root, "重命名或移动", item.Path, "远程完整路径");
         if (string.IsNullOrWhiteSpace(destination) || destination == item.Path || !destination.StartsWith('/')) return;
@@ -1708,7 +1757,8 @@ internal sealed class AppController : IDisposable
 
     private void CopyRemoteItem(WorkspaceSession workspaceSession, SftpTreeItem item, bool cut)
     {
-        if (item.Entry is null) return;
+        if (item.Entry is null || !SessionItemScope.Matches(_activeSessionId, item.SessionId) ||
+            workspaceSession.Id != item.SessionId) return;
         _remoteClipboard = new RemoteClipboardItem(workspaceSession.Id, item.Path, item.Entry.Name, item.IsDirectory, cut);
         UpdateSessionStatus(workspaceSession, cut ? "已剪切远程项目，选择目标目录后粘贴。" : "已复制远程项目，选择目标目录后粘贴。", "#8fb6ff");
     }
@@ -1765,7 +1815,7 @@ internal sealed class AppController : IDisposable
 
     private async Task DeleteRemoteItemAsync(SftpTreeItem item)
     {
-        if (_root is null || item.Entry is null || !_sessions.TryGetValue(item.SessionId, out var workspaceSession) ||
+        if (_root is null || item.Entry is null || !TryGetActiveSftpSession(item, out var workspaceSession) ||
             workspaceSession.Transport is not { } transport ||
             !await WorkspaceDialogs.ConfirmAsync(_root, "删除远程项目", $"永久删除 {item.Path}？\n目录将递归删除，此操作无法撤销。")) return;
         try
