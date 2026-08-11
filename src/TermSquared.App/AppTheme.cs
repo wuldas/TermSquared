@@ -274,6 +274,25 @@ internal static class AppTheme
           border-bottom: 2px solid #ff7f8f;
         }
 
+        .session-tool-tab {
+          background: transparent;
+          color: #8d9aae;
+          border: 0;
+          border-bottom: 2px solid transparent;
+          border-radius: 5px 5px 0 0;
+        }
+
+        .session-tool-tab:hover {
+          background: #172130;
+          color: #ffffff;
+        }
+
+        .session-tool-tab.active {
+          background: #172130;
+          color: #ffffff;
+          border-bottom: 2px solid #4f8cff;
+        }
+
         .workspace-title {
           color: #f2f6fb;
           font-weight: 700;

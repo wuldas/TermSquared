@@ -12,8 +12,8 @@
       <MenuItem ref="ViewMenu" text="视图">
         <Menu>
           <MenuItem ref="ToggleLeftMenuItem" text="连接侧栏" />
-          <MenuItem ref="ToggleRightMenuItem" text="检查器侧栏" />
-          <MenuItem ref="ToggleBottomMenuItem" text="快速发送面板" />
+          <MenuItem ref="ToggleRightMenuItem" text="SFTP 右侧分屏" />
+          <MenuItem ref="ToggleBottomMenuItem" text="多行命令面板" />
         </Menu>
       </MenuItem>
       <MenuItem ref="ToolsMenu" text="工具">
@@ -31,7 +31,6 @@
       </MenuItem>
     </MenuBar>
     <View class="top-bar-spacer" />
-    <Text ref="BrokerStatus" class="status-chip" text="MCP  LOCAL" />
   </View>
 </template>
 <script lang="csharp" namespace="TermSquared.App.Components" name="TopBar" access="internal">

@@ -9,9 +9,6 @@
     </View>
     <View ref="CommandPanelBody" class="command-panel-body">
       <CodeEditor ref="CommandEditor" class="command-editor" />
-      <View class="command-panel-footer">
-        <Text class="command-panel-helper" text="Ctrl+Enter 发送全部  |  命令内容不会写入应用日志" />
-      </View>
     </View>
   </View>
 </template>
@@ -23,8 +20,6 @@ using Square.Extensions.CodeEditor;
   .command-panel-header { display: flex; flex-direction: row; align-items: center; width: 100%; height: 38px; padding: 4px 8px 4px 10px; gap: 7px; }
   .command-panel-title { flex: 1; color: #dfe7f2; font-weight: 700; }
   .icon-button { width: 34px; height: 30px; padding: 0; font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets'; font-size: 16px; }
-  .command-panel-body { display: flex; flex-direction: column; width: 100%; height: 150px; padding: 0 10px 8px 10px; gap: 6px; }
+  .command-panel-body { display: flex; flex-direction: column; width: 100%; height: 150px; padding: 0 10px 8px 10px; gap: 0; }
   .command-editor { display: flex; flex: 1; min-width: 0; }
-  .command-panel-footer { display: flex; flex-direction: row; align-items: center; width: 100%; height: 18px; }
-  .command-panel-helper { flex: 1; color: #718096; }
 </style>

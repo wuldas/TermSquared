@@ -1,39 +1,19 @@
 <template>
-  <View ref="Root" class="sidebar sidebar-right">
+  <View ref="Root" class="sidebar sidebar-right sftp-tool">
     <View class="panel-header">
-      <FontIcon ref="PanelIcon" class="fluent-icon" font-family="Segoe Fluent Icons" glyph="" />
-      <Text ref="PanelTitle" class="panel-title" text="历史记录" />
-      <Text ref="PanelSubtitle" class="panel-subtitle" text="本次运行" />
+      <FontIcon ref="PanelIcon" class="fluent-icon" font-family="Segoe Fluent Icons" glyph="" />
+      <Text ref="PanelTitle" class="panel-title" text="SFTP 文件" />
+      <Text ref="PanelSubtitle" class="panel-subtitle" text="当前会话" />
     </View>
-    <View class="right-panel-content">
-      <View ref="HistoryPanel" class="right-context-panel">
-        <ScrollViewer class="history-scroll">
-          <View ref="HistoryItems" class="history-items">
-            <View class="subtle-surface empty-state">
-              <Text class="empty-state-title" text="暂无连接历史" />
-              <Text class="empty-state-body" text="连接会话后，这里会记录目标和连接结果。" />
-            </View>
-          </View>
-        </ScrollViewer>
+    <View ref="SftpPanel" class="right-context-panel">
+      <View class="sftp-path-bar">
+        <Text ref="SftpPathText" class="sftp-path-text" text="/" />
+        <Button ref="NewRemoteFolderButton" class="icon-button" text="" />
+        <Button ref="UploadRemoteFileButton" class="icon-button" text="" />
+        <Button ref="SftpMoreButton" class="icon-button" text="" />
+        <Button ref="RefreshSftpButton" class="icon-button" text="" />
       </View>
-      <View ref="SftpPanel" class="right-context-panel">
-        <View class="sftp-path-bar">
-          <Text ref="SftpPathText" class="sftp-path-text" text="/" />
-          <Button ref="NewRemoteFolderButton" class="icon-button" text="" />
-          <Button ref="UploadRemoteFileButton" class="icon-button" text="" />
-          <Button ref="SftpMoreButton" class="icon-button" text="" />
-          <Button ref="RefreshSftpButton" class="icon-button" text="" />
-        </View>
-        <Tree ref="SftpTree" class="sftp-tree" />
-      </View>
-      <View ref="SecurityPanel" class="right-context-panel security-panel">
-        <Text ref="Details" class="security-details" text="选择连接后，这里会显示目标地址与主机密钥状态。" />
-        <View ref="HostKeyApproval" class="warning-surface">
-          <Text class="warning-title" text="需要确认未知主机密钥" />
-          <Button ref="TrustOnceButton" class="action-button" text="仅本次信任并连接" />
-          <Button ref="TrustStoreButton" class="action-button button-primary" text="信任并保存此密钥" />
-        </View>
-      </View>
+      <Tree ref="SftpTree" class="sftp-tree" />
     </View>
   </View>
 </template>
@@ -41,24 +21,13 @@
 </script>
 <style>
   .sidebar { display: flex; flex-direction: column; height: 100%; gap: 0; }
-  .sidebar-right { width: 332px; }
+  .sidebar-right { width: 100%; }
   .panel-header { display: flex; flex-direction: row; align-items: center; width: 100%; height: 48px; padding: 8px 12px; gap: 8px; }
   .panel-title { flex: 1; color: #e7edf5; font-size: 14px; }
   .panel-subtitle { flex-shrink: 0; color: #718096; white-space: nowrap; }
-  .right-panel-content { display: flex; flex: 1; flex-direction: column; width: 100%; height: auto; min-height: 0; gap: 0; }
-  .right-context-panel { display: flex; flex: 1; flex-direction: column; width: 100%; height: 100%; gap: 0; }
-  .history-scroll { display: flex; flex: 1; min-height: 0; padding: 12px; }
-  .history-items { display: flex; flex-direction: column; width: 100%; height: auto; gap: 8px; }
-  .empty-state { display: flex; flex-direction: column; width: 100%; height: 112px; padding: 16px 14px; gap: 7px; }
-  .empty-state-title { color: #c8d2df; font-weight: 700; }
-  .empty-state-body { color: #718096; white-space: pre-wrap; }
+  .right-context-panel { display: flex; flex: 1; flex-direction: column; width: 100%; height: auto; min-height: 0; gap: 0; }
   .icon-button { width: 34px; height: 30px; padding: 0; font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets'; font-size: 16px; }
   .sftp-path-bar { display: flex; flex-direction: row; align-items: center; width: 100%; height: 44px; padding: 6px 8px 6px 12px; gap: 6px; }
   .sftp-path-text { flex: 1; color: #dfe7f2; }
   .sftp-tree { display: flex; flex: 1; min-height: 0; padding: 6px 8px 12px 8px; }
-  .security-panel { padding: 12px; gap: 10px; }
-  .security-details { color: #9aa7b8; white-space: pre-wrap; }
-  .warning-surface { display: flex; flex-direction: column; width: 100%; height: auto; padding: 12px; gap: 9px; }
-  .warning-title { color: #f6c66b; font-weight: 700; }
-  .action-button { width: 100%; height: 36px; padding: 6px 12px; }
 </style>

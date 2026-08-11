@@ -27,6 +27,7 @@ public static class Program
         controller.Attach(window);
         window.LoadGlobalCssText(AppTheme.Css);
         window.Load(controller.BuildWorkspace());
+        controller.ConnectRestoredActiveSession();
         if (string.Equals(Environment.GetEnvironmentVariable("TERMSQUARED_DEVTOOLS"), "1", StringComparison.Ordinal))
         {
             var devToolsToken = Environment.GetEnvironmentVariable("TERMSQUARED_DEVTOOLS_TOKEN");

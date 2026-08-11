@@ -12,6 +12,7 @@
     <Project Path="src/TermSquared.App/TermSquared.App.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/TermSquared.App.Tests/TermSquared.App.Tests.csproj" />
     <Project Path="tests/TermSquared.Core.Tests/TermSquared.Core.Tests.csproj" />
     <Project Path="tests/TermSquared.Security.Tests/TermSquared.Security.Tests.csproj" />
     <Project Path="tests/TermSquared.Protocols.Tests/TermSquared.Protocols.Tests.csproj" />

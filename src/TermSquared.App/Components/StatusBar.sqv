@@ -1,6 +1,6 @@
 <template>
   <View ref="Root" class="status-bar">
-    <Text ref="SessionStatus" class="session-status" text="就绪 - 请选择连接" />
+    <Text ref="SessionStatus" class="session-status" text="TermSquared 工作区" />
     <Text class="status-bar-info" text="UTF-8   |   MCP 本地代理   |   严格主机密钥" />
   </View>
 </template>

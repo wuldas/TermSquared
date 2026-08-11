@@ -1,22 +1,56 @@
 <template>
   <View ref="Root" class="workspace-center">
     <SessionTabs ref="SessionTabs" style="width: 100%; height: 42px;" />
+    <View ref="SessionToolTabsRoot" class="session-tool-tabs">
+      <Button ref="TerminalToolButton" class="session-tool-tab" text="终端" />
+      <Button ref="SftpToolButton" class="session-tool-tab" text="SFTP 文件" />
+      <Button ref="PortForwardingToolButton" class="session-tool-tab" text="映射端口" />
+      <Button ref="SessionInfoToolButton" class="session-tool-tab" text="会话" />
+    </View>
     <TerminalToolbar ref="TerminalToolbar" style="width: 100%; height: 48px;" />
-    <View ref="SessionContentHost" class="session-content-host">
-      <View class="subtle-surface empty-state">
-        <Text class="empty-state-title" text="打开一个远程会话" />
-        <Text class="empty-state-body" text="双击左侧连接或选择后点击连接。每个会话都有独立终端、命令草稿和 SFTP 状态。" />
+    <View ref="ToolWorkspace" class="tool-workspace">
+      <View ref="PrimaryToolHost" class="tool-host tool-host-primary">
+        <View class="subtle-surface empty-state">
+          <Text class="empty-state-title" text="打开一个远程会话" />
+          <Text class="empty-state-body" text="双击左侧连接或选择后点击连接。每个会话都有独立终端、命令草稿和 SFTP 状态。" />
+        </View>
       </View>
+      <Splitter ref="ToolSplit" class="splitter tool-splitter" value="360" minimum="280" maximum="700" vertical="true" reversed="true" />
+      <View ref="SecondaryToolHost" class="tool-host tool-host-secondary" />
     </View>
     <CommandPanel ref="CommandPanel" style="width: 100%;" />
+    <View ref="SessionContextStatusRoot" class="session-context-status-bar">
+      <FontIcon ref="SessionStatusIcon" class="fluent-icon" font-family="Segoe Fluent Icons" glyph="" />
+      <Text ref="SessionStatus" class="session-context-status" text="就绪 - 请选择连接" />
+      <Button ref="CommandEntryButton" class="session-status-action" text="多行命令" />
+      <Button ref="CloseSplitButton" class="session-status-action" text="关闭分屏" />
+    </View>
+    <View ref="ToolStaging" class="tool-staging">
+      <InspectorSidebar ref="ToolInspector" style="width: 100%; height: 100%;" />
+      <SessionInfoPanel ref="SessionInfo" style="width: 100%; height: 100%;" />
+    </View>
   </View>
 </template>
 <script lang="csharp" namespace="TermSquared.App.Components" name="WorkspaceCenter" access="internal">
 </script>
 <style>
   .workspace-center { display: flex; flex: 1; flex-direction: column; width: auto; height: 100%; min-width: 0; gap: 0; }
-  .session-content-host { display: flex; flex: 1; flex-direction: column; width: 100%; height: auto; min-height: 260px; gap: 0; }
+  .session-tool-tabs { display: flex; flex-direction: row; align-items: flex-end; width: 100%; height: 38px; padding: 4px 8px 0 8px; gap: 3px; background: #0d131a; border-bottom: 1px solid #253040; }
+  .session-tool-tab { width: auto; height: 34px; padding: 4px 14px; background: transparent; color: #8d9aae; border: 0; border-bottom: 2px solid transparent; border-radius: 5px 5px 0 0; }
+  .session-tool-tab:hover { background: #172130; color: #ffffff; }
+  .session-tool-tab.active { background: #172130; color: #ffffff; border-bottom: 2px solid #4f8cff; }
+  .tool-workspace { display: flex; position: relative; flex: 1; flex-direction: row; width: 100%; height: auto; min-height: 260px; min-width: 0; gap: 0; }
+  .tool-host { display: flex; flex-direction: column; height: 100%; min-width: 0; gap: 0; overflow: hidden; }
+  .tool-host-primary { flex: 1; width: auto; }
+  .tool-host-secondary { width: 360px; flex-shrink: 0; border-left: 1px solid #253040; }
+  .tool-splitter { width: 6px; height: 100%; flex-shrink: 0; background: transparent; cursor: col-resize; z-index: 2; }
+  .tool-splitter:hover, .tool-splitter:active { background: rgba(63, 123, 232, 0.45); }
   .empty-state { display: flex; flex-direction: column; width: 100%; height: 112px; padding: 16px 14px; gap: 7px; }
   .empty-state-title { color: #c8d2df; font-weight: 700; }
   .empty-state-body { color: #718096; white-space: pre-wrap; }
+  .session-context-status-bar { display: flex; flex-direction: row; align-items: center; width: 100%; height: 30px; padding: 4px 10px; gap: 7px; background: #0d131a; border-top: 1px solid #253040; }
+  .session-context-status { flex: 1; min-width: 0; color: #9aa7b8; white-space: nowrap; }
+  .session-status-action { width: auto; height: 24px; padding: 2px 9px; background: transparent; color: #8fb6ff; border: 1px solid #2a3748; border-radius: 5px; }
+  .session-status-action:hover { background: #1b2b41; color: #ffffff; }
+  .tool-staging { display: flex; width: 0; height: 0; overflow: hidden; }
 </style>

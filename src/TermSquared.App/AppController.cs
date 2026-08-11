@@ -33,36 +33,40 @@ internal sealed class AppController : IDisposable
     private readonly WorkspaceSettingsStore _workspaceSettings;
     private IReadOnlyList<ConnectionProfile> _profiles;
     private readonly Dictionary<Guid, WorkspaceSession> _sessions = [];
+    private readonly List<Guid> _sessionOrder = [];
     private readonly Dictionary<string, ConnectionProfileTreeItem> _connectionItems = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ConnectionFolderTreeItem> _connectionFolders = new(StringComparer.Ordinal);
     private View? _root;
     private AppWindow? _window;
     private Element? _leftSidebar;
-    private Element? _rightSidebar;
+    private Element? _sftpToolRoot;
+    private Element? _sessionInfoRoot;
     private Element? _bottomPanel;
     private Splitter? _leftSplitter;
-    private Splitter? _rightSplitter;
+    private Splitter? _toolSplit;
     private Tree? _connectionTree;
     private Tree? _sftpTree;
     private View? _sessionTabsHost;
+    private View? _sessionTabsRoot;
+    private View? _sessionToolTabsRoot;
+    private View? _sessionContextStatusRoot;
     private View? _sessionContentHost;
+    private View? _secondaryToolHost;
+    private View? _terminalToolbarRoot;
     private View? _protocolToolsHost;
     private Text? _connectionEmptyState;
     private View? _hostKeyApproval;
     private View? _historyPanel;
     private View? _historyItems;
-    private View? _sftpPanel;
     private View? _securityPanel;
     private View? _commandPanelBody;
     private CodeEditor? _commandEditor;
     private Text? _sessionStatus;
     private Text? _details;
     private Text? _sftpPathText;
-    private Text? _sessionTabStatus;
-    private View? _sessionTabStatusHost;
     private Text? _rightPanelTitle;
     private Text? _rightPanelSubtitle;
-    private FontIcon? _sessionTabStatusIcon;
+    private FontIcon? _sessionStatusIcon;
     private FontIcon? _rightPanelIcon;
     private Input? _connectionFilter;
     private Button? _connectButton;
@@ -71,6 +75,12 @@ internal sealed class AppController : IDisposable
     private Button? _sendButton;
     private Button? _clearCommandsButton;
     private Button? _expandCommandsButton;
+    private Button? _terminalToolButton;
+    private Button? _sftpToolButton;
+    private Button? _portForwardingToolButton;
+    private Button? _sessionInfoToolButton;
+    private Button? _commandEntryButton;
+    private Button? _closeSplitButton;
     private Button? _trustOnceButton;
     private Button? _trustStoreButton;
     private ConnectionProfile? _selectedProfile;
@@ -80,7 +90,8 @@ internal sealed class AppController : IDisposable
     private string? _commandTextBeforeShortcut;
     private Guid? _commandShortcutSessionId;
     private bool _leftSidebarRequested = true;
-    private bool _rightSidebarRequested = true;
+    private bool _restoringWorkspace;
+    private WorkspaceSession? _restoredActiveSession;
     private bool _disposed;
 
     public AppController(ImportedConfiguration configuration, string configPath)
@@ -120,31 +131,34 @@ internal sealed class AppController : IDisposable
 
         _root = page.Root;
         _leftSidebar = page.LeftSidebar;
-        _rightSidebar = page.RightSidebar;
+        _sftpToolRoot = page.RightSidebarRoot;
+        _sessionInfoRoot = page.SessionInfoRoot;
         _bottomPanel = page.BottomPanel;
         _leftSplitter = page.LeftSplitter;
-        _rightSplitter = page.RightSplitter;
+        _toolSplit = page.ToolSplit;
         _connectionTree = page.ConnectionTree;
         _sftpTree = page.SftpTree;
         _sessionTabsHost = page.SessionTabsHost;
+        _sessionTabsRoot = page.SessionTabsRoot;
+        _sessionToolTabsRoot = page.SessionToolTabsRoot;
+        _sessionContextStatusRoot = page.SessionContextStatusRoot;
         _sessionContentHost = page.SessionContentHost;
+        _secondaryToolHost = page.SecondaryToolHost;
+        _terminalToolbarRoot = page.TerminalToolbarRoot;
         _protocolToolsHost = page.ProtocolToolsHost;
         _connectionEmptyState = page.ConnectionEmptyState;
         _hostKeyApproval = page.HostKeyApproval;
         _historyPanel = page.HistoryPanel;
         _historyItems = page.HistoryItems;
-        _sftpPanel = page.SftpPanel;
         _securityPanel = page.SecurityPanel;
         _commandPanelBody = page.CommandPanelBody;
         _commandEditor = page.CommandEditor;
         _sessionStatus = page.SessionStatus;
         _details = page.Details;
         _sftpPathText = page.SftpPathText;
-        _sessionTabStatus = page.SessionTabStatus;
-        _sessionTabStatusHost = page.SessionTabStatusHost;
         _rightPanelTitle = page.RightPanelTitle;
         _rightPanelSubtitle = page.RightPanelSubtitle;
-        _sessionTabStatusIcon = page.SessionTabStatusIcon;
+        _sessionStatusIcon = page.SessionStatusIcon;
         _rightPanelIcon = page.RightPanelIcon;
         _connectionFilter = page.ConnectionFilter;
         _connectButton = page.ConnectButton;
@@ -153,11 +167,18 @@ internal sealed class AppController : IDisposable
         _sendButton = page.SendButton;
         _clearCommandsButton = page.ClearCommandsButton;
         _expandCommandsButton = page.ExpandCommandsButton;
+        _terminalToolButton = page.TerminalToolButton;
+        _sftpToolButton = page.SftpToolButton;
+        _portForwardingToolButton = page.PortForwardingToolButton;
+        _sessionInfoToolButton = page.SessionInfoToolButton;
+        _commandEntryButton = page.CommandEntryButton;
+        _closeSplitButton = page.CloseSplitButton;
         _trustOnceButton = page.TrustOnceButton;
         _trustStoreButton = page.TrustStoreButton;
 
         ConfigureWorkspacePage(page);
         RebuildConnectionTree();
+        RestoreOpenSessions();
         RenderActiveSession();
         if (_window is not null) ApplyResponsiveLayout(_window.ClientSize);
         return page;
@@ -167,19 +188,18 @@ internal sealed class AppController : IDisposable
     {
         ConfigureFontIcon(page.ConnectionHeaderIcon, FluentGlyphs.Connect, "#8fb6ff", 16);
         ConfigureFontIcon(page.CommandPanelIcon, FluentGlyphs.CommandPrompt, "#8fb6ff", 16);
-        ConfigureFontIcon(page.SessionTabStatusIcon, FluentGlyphs.Connect, "#718096", 14);
+        ConfigureFontIcon(page.SessionStatusIcon, FluentGlyphs.Connect, "#718096", 14);
+        ConfigureFontIcon(page.SftpPanelIcon, FluentGlyphs.Folder, "#8fb6ff", 16);
         ConfigureFontIcon(page.RightPanelIcon, FluentGlyphs.History, "#8fb6ff", 16);
-        page.SessionTabStatusHost.IsVisible = false;
         page.LeftSplitter.ZIndex = 1000;
-        page.RightSplitter.ZIndex = 1000;
-        page.BrokerStatus.Tooltip = "仅当前用户可访问的本地 MCP Broker 正在运行";
+        page.ToolSplit.ZIndex = 1000;
 
         page.ConnectMenuItem.Command = _ => RequestConnect();
         page.DisconnectMenuItem.Command = _ => RequestDisconnect();
         page.ExitMenuItem.Command = _ => _window?.Close();
         page.ToggleLeftMenuItem.Command = _ => ToggleLeftSidebar();
-        page.ToggleRightMenuItem.Command = _ => ToggleRightSidebar();
-        page.ToggleBottomMenuItem.Command = _ => TogglePanel(_bottomPanel);
+        page.ToggleRightMenuItem.Command = _ => ToggleSftpSplit();
+        page.ToggleBottomMenuItem.Command = _ => ToggleCommandPanelVisible();
         page.RefreshRemoteMenuItem.Command = item => { _ = RefreshSftpAsync(); };
         page.RestoreConnectionsMenuItem.Command = _ => RestoreHiddenConnections();
         page.ProbeVncMenuItem.Command = item => { _ = ProbeVncAsync(); };
@@ -205,7 +225,7 @@ internal sealed class AppController : IDisposable
             if (e.KeyCode == 13 && page.ConnectionTree.SelectedItem is ConnectionProfileTreeItem profileItem)
             {
                 e.PreventDefault();
-                _ = OpenSessionAsync(profileItem.Profile);
+                _ = OpenSessionAsync(profileItem.Profile, workspaceId: profileItem.WorkspaceId);
             }
             else if (e.KeyCode == 93 || e.ShiftKey && e.KeyCode == 121)
             {
@@ -228,6 +248,17 @@ internal sealed class AppController : IDisposable
         });
         ConfigureIconButton(page.ExpandCommandsButton, FluentGlyphs.ChevronUp, "展开命令面板",
             ToggleCommandPanelExpanded);
+
+        ConfigureSessionToolButton(page.TerminalToolButton, SessionToolKind.Terminal);
+        ConfigureSessionToolButton(page.SftpToolButton, SessionToolKind.Sftp);
+        ConfigureSessionToolButton(page.PortForwardingToolButton, SessionToolKind.PortForwarding);
+        ConfigureSessionToolButton(page.SessionInfoToolButton, SessionToolKind.SessionInfo);
+        page.CommandEntryButton.Tooltip = "显示或隐藏多行命令编辑器";
+        ConfigureStatusActionButton(page.CommandEntryButton);
+        page.CommandEntryButton.AddEventListener(StandardEvents.Click, ToggleCommandPanelVisible);
+        page.CloseSplitButton.Tooltip = "关闭当前会话的右侧分屏";
+        ConfigureStatusActionButton(page.CloseSplitButton);
+        page.CloseSplitButton.AddEventListener(StandardEvents.Click, CloseToolSplit);
 
         page.CommandEditor.Placeholder = "输入一行或多行命令。每行将依次发送到当前 SSH Shell。";
         page.CommandEditor.Language = "plaintext";
@@ -256,7 +287,18 @@ internal sealed class AppController : IDisposable
         });
 
         ConfigureSplitter(page.LeftSplitter, page.LeftSidebar, page.LeftSidebarRoot, 276, 230, 420);
-        ConfigureSplitter(page.RightSplitter, page.RightSidebar, page.RightSidebarRoot, 332, 286, 460, reversed: true);
+        page.ToolSplit.Minimum = 280;
+        page.ToolSplit.Maximum = 700;
+        page.ToolSplit.Value = 360;
+        page.ToolSplit.IsVertical = true;
+        page.ToolSplit.IsReversed = true;
+        page.ToolSplit.AddEventListener(StandardEvents.Input, () =>
+        {
+            if (ActiveSession is not { } session) return;
+            session.SplitWidth = page.ToolSplit.Value;
+            ApplyToolSplitWidth(session.SplitWidth);
+        });
+        page.ToolSplit.AddEventListener(StandardEvents.Change, SaveOpenSessions);
 
         ConfigureIconButton(page.NewRemoteFolderButton, FluentGlyphs.NewFolder, "新建远程目录",
             () => _ = CreateRemoteDirectoryAsync());
@@ -285,6 +327,13 @@ internal sealed class AppController : IDisposable
         page.TrustStoreButton.AddEventListener(StandardEvents.Click,
             () => _ = ConnectPendingAsync(HostKeyDecision.TrustAndStore));
         page.BottomPanel.IsVisible = false;
+        page.ToolSplit.IsVisible = false;
+        page.SecondaryToolHost.IsVisible = false;
+        page.CloseSplitButton.IsVisible = false;
+        page.CommandEntryButton.IsVisible = false;
+        page.SessionTabsRoot.IsVisible = false;
+        page.SessionToolTabsRoot.IsVisible = false;
+        page.SessionContextStatusRoot.IsVisible = false;
         SetCommandPanelExpanded(false);
         SetTrustButtons(false);
         ShowHistoryContext();
@@ -340,6 +389,86 @@ internal sealed class AppController : IDisposable
         icon.Style.Set("color", color);
         icon.Style.Set("width", size.ToString("0", CultureInfo.InvariantCulture) + "px");
         icon.Style.Set("height", size.ToString("0", CultureInfo.InvariantCulture) + "px");
+    }
+
+    private void ConfigureSessionToolButton(Button button, SessionToolKind tool)
+    {
+        button.Tooltip = "左键切换；右键在右侧分屏打开";
+        button.AddEventListener(StandardEvents.Click, () => ActivateSessionTool(tool));
+        button.AddEventListener<PointerEvent>(StandardEvents.ContextMenu, e =>
+        {
+            var menu = new ContextMenu();
+            menu.ClassList.Add("context-menu");
+            menu.Children.Add(MenuCommand("在右侧分屏打开", () => OpenToolSplit(tool)));
+            OpenContextMenu(menu, new Point(e.ClientX, e.ClientY));
+            e.PreventDefault();
+        });
+    }
+
+    private static void ConfigureStatusActionButton(Button button)
+    {
+        button.Style.Set("background", "transparent");
+        button.Style.Set("color", "#8fb6ff");
+        button.Style.Set("border", "1px solid #2a3748");
+        button.Style.Set("border-radius", "5px");
+    }
+
+    private void ActivateSessionTool(SessionToolKind tool)
+    {
+        var session = ActiveSession;
+        if (session is null) return;
+        if (session.SplitTool == tool)
+            session.SplitTool = session.ActiveTool;
+        session.ActiveTool = tool;
+        if (session.SplitTool == session.ActiveTool) session.SplitTool = null;
+        session.CommandPanelVisible &= tool == SessionToolKind.Terminal;
+        RenderToolLayout(session);
+        SaveOpenSessions();
+    }
+
+    private void OpenToolSplit(SessionToolKind tool)
+    {
+        var session = ActiveSession;
+        if (session is null) return;
+        if (session.ActiveTool == tool)
+        {
+            _ = SetStatusAsync("当前工具已在主区域显示", "#9aa7b8");
+            return;
+        }
+        session.SplitTool = tool;
+        RenderToolLayout(session);
+        SaveOpenSessions();
+    }
+
+    private void ToggleSftpSplit()
+    {
+        if (ActiveSession is not { } session) return;
+        if (session.SplitTool == SessionToolKind.Sftp) CloseToolSplit();
+        else OpenToolSplit(SessionToolKind.Sftp);
+    }
+
+    private void CloseToolSplit()
+    {
+        if (ActiveSession is not { } session) return;
+        session.SplitTool = null;
+        RenderToolLayout(session);
+        SaveOpenSessions();
+    }
+
+    private void ToggleCommandPanelVisible()
+    {
+        if (ActiveSession is not { } session || session.ActiveTool != SessionToolKind.Terminal) return;
+        session.CommandPanelVisible = !session.CommandPanelVisible;
+        if (_bottomPanel is not null) _bottomPanel.IsVisible = session.CommandPanelVisible;
+        if (_commandEntryButton is not null)
+            _commandEntryButton.TextContent = session.CommandPanelVisible ? "收起命令" : "多行命令";
+        SaveOpenSessions();
+    }
+
+    private void ApplyToolSplitWidth(float widthValue)
+    {
+        if (_secondaryToolHost is null) return;
+        _secondaryToolHost.Style.Set("width", widthValue.ToString("0", CultureInfo.InvariantCulture) + "px");
     }
 
     private static View BuildEmptyState(string title, string description)
@@ -406,7 +535,7 @@ internal sealed class AppController : IDisposable
                 if (e.TimeStamp - item.LastClickTime <= 500)
                 {
                     item.LastClickTime = 0;
-                    _ = OpenSessionAsync(item.Profile, displayName: item.TextContent, forceNew: true);
+                    _ = OpenSessionAsync(item.Profile, displayName: item.TextContent, forceNew: true, workspaceId: item.WorkspaceId);
                 }
                 else item.LastClickTime = e.TimeStamp;
             });
@@ -546,7 +675,7 @@ internal sealed class AppController : IDisposable
         menu.ClassList.Add("context-menu");
         if (selected is ConnectionProfileTreeItem profile)
         {
-            menu.Children.Add(MenuCommand("打开新会话", () => _ = OpenSessionAsync(profile.Profile, displayName: profile.TextContent, forceNew: true)));
+            menu.Children.Add(MenuCommand("打开新会话", () => _ = OpenSessionAsync(profile.Profile, displayName: profile.TextContent, forceNew: true, workspaceId: profile.WorkspaceId)));
             menu.Children.Add(MenuCommand("编辑连接信息", () => _ = EditSelectedConnectionAsync()));
             menu.Children.Add(MenuCommand("重命名显示名称", () => _ = RenameSelectedConnectionNodeAsync()));
             menu.Children.Add(MenuCommand("复制连接快捷方式", () => DuplicateConnectionItem(profile)));
@@ -884,9 +1013,13 @@ internal sealed class AppController : IDisposable
         ConnectionProfile profile,
         bool connect = true,
         string? displayName = null,
-        bool forceNew = false)
+        bool forceNew = false,
+        string? workspaceId = null)
     {
-        var existing = forceNew ? null : _sessions.Values.FirstOrDefault(session => session.Profile.Id == profile.Id);
+        var existing = forceNew ? null : _sessions.Values.FirstOrDefault(session =>
+            workspaceId is not null
+                ? string.Equals(session.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase)
+                : session.Profile.Id == profile.Id);
         if (existing is not null)
         {
             await InvokeUiAsync(() => ActivateSession(existing.Id)).ConfigureAwait(false);
@@ -894,34 +1027,111 @@ internal sealed class AppController : IDisposable
         }
 
         WorkspaceSession? created = null;
-        await InvokeUiAsync(() =>
-        {
-            var terminal = new TerminalView(100, 30, 5000);
-            terminal.ClassList.Add("terminal-frame");
-            terminal.Style.Set("flex", "1");
-            terminal.Style.Set("width", "100%");
-            terminal.Style.Set("min-height", "260px");
-            terminal.Style.Set("font-family", "Cascadia Mono, Consolas, monospace");
-            terminal.Style.Set("font-size", "15px");
-            terminal.Style.Set("border", "0");
-            var sessionName = displayName ?? _workspaceSettings.GetDisplayName(profile.Id.ToString("D"), profile.Name);
-            created = new WorkspaceSession(profile, sessionName, terminal)
-            {
-                DetailsText = $"目标: {profile.Username}@{profile.Host}:{profile.Port}\n状态: 尚未建立安全会话"
-            };
-            var session = created;
-            terminal.Feed("\x1b[1;36mTermSquared secure remote workspace\x1b[0m\r\n");
-            terminal.Feed($"Session: {sessionName}  {profile.Username}@{profile.Host}:{profile.Port}\r\n\r\n");
-            terminal.Input += (_, input) => _ = WriteTerminalInputAsync(session, input.Data);
-            terminal.GridSizeChanged += (_, size) => _ = ResizeRemoteTerminalAsync(session, size.Columns, size.Rows);
-            _sessions.Add(session.Id, session);
-            BuildSessionTab(session);
-            ActivateSession(session.Id);
-        }).ConfigureAwait(false);
+        await InvokeUiAsync(() => created = CreateWorkspaceSession(
+            profile,
+            displayName ?? _workspaceSettings.GetDisplayName(workspaceId ?? profile.Id.ToString("D"), profile.Name),
+            workspaceId: workspaceId)).ConfigureAwait(false);
 
         if (connect && created is not null)
             await ConnectAsync(created, HostKeyDecision.Reject).ConfigureAwait(false);
         return created;
+    }
+
+    private WorkspaceSession CreateWorkspaceSession(
+        ConnectionProfile profile,
+        string displayName,
+        Guid? sessionId = null,
+        string? workspaceId = null,
+        SessionToolKind activeTool = SessionToolKind.Terminal,
+        SessionToolKind? splitTool = null,
+        float splitWidth = 360)
+    {
+        var terminal = new TerminalView(100, 30, 5000);
+        terminal.ClassList.Add("terminal-frame");
+        terminal.Style.Set("flex", "1");
+        terminal.Style.Set("width", "100%");
+        terminal.Style.Set("min-height", "260px");
+        terminal.Style.Set("font-family", "Cascadia Mono, Consolas, monospace");
+        terminal.Style.Set("font-size", "15px");
+        terminal.Style.Set("border", "0");
+        var session = new WorkspaceSession(profile, displayName, terminal, sessionId, workspaceId)
+        {
+            DetailsText = $"目标: {profile.Username}@{profile.Host}:{profile.Port}\n状态: 尚未建立安全会话",
+            ActiveTool = activeTool,
+            SplitTool = splitTool == activeTool ? null : splitTool,
+            SplitWidth = Math.Clamp(splitWidth, 280, 700)
+        };
+        var crlf = string.Concat((char)13, (char)10);
+        terminal.Feed("\x1b[1;36mTermSquared secure remote workspace\x1b[0m" + crlf);
+        terminal.Feed($"Session: {displayName}  {profile.Username}@{profile.Host}:{profile.Port}" + crlf + crlf);
+        terminal.Input += (_, input) => _ = WriteTerminalInputAsync(session, input.Data);
+        terminal.GridSizeChanged += (_, size) => _ = ResizeRemoteTerminalAsync(session, size.Columns, size.Rows);
+        _sessions.Add(session.Id, session);
+        _sessionOrder.Add(session.Id);
+        BuildSessionTab(session);
+        ActivateSession(session.Id);
+        return session;
+    }
+
+    private void RestoreOpenSessions()
+    {
+        var plan = WorkspaceRestorePlanner.Create(_workspaceSettings.OpenSessions, _workspaceSettings.ActiveSessionId);
+        if (plan.Count == 0) return;
+        _restoringWorkspace = true;
+        try
+        {
+            foreach (var entry in plan)
+            {
+                if (!TryResolveWorkspaceProfile(entry.Settings.WorkspaceId, out var profile)) continue;
+                var session = CreateWorkspaceSession(
+                    profile,
+                    entry.Settings.DisplayName,
+                    entry.Settings.SessionId,
+                    entry.Settings.WorkspaceId,
+                    entry.Settings.ActiveTool,
+                    entry.Settings.SplitTool,
+                    entry.Settings.SplitWidth);
+                if (entry.ShouldConnect) _restoredActiveSession = session;
+            }
+            if (_workspaceSettings.ActiveSessionId is Guid active && _sessions.ContainsKey(active))
+                ActivateSession(active);
+        }
+        finally
+        {
+            _restoringWorkspace = false;
+        }
+    }
+
+    public void ConnectRestoredActiveSession()
+    {
+        var session = _restoredActiveSession;
+        _restoredActiveSession = null;
+        if (session is not null) _ = ConnectAsync(session, HostKeyDecision.Reject);
+    }
+
+    private bool TryResolveWorkspaceProfile(string workspaceId, out ConnectionProfile profile)
+    {
+        var profileId = workspaceId;
+        if (_workspaceSettings.Connections.TryGetValue(workspaceId, out var settings) &&
+            !string.IsNullOrWhiteSpace(settings.SourceProfileId))
+            profileId = settings.SourceProfileId;
+        profile = _profiles.FirstOrDefault(item =>
+            string.Equals(item.Id.ToString("D"), profileId, StringComparison.OrdinalIgnoreCase))!;
+        return profile is not null;
+    }
+
+    private void SaveOpenSessions()
+    {
+        if (_restoringWorkspace) return;
+        _workspaceSettings.SaveOpenSessions(
+            _sessionOrder.Where(_sessions.ContainsKey).Select(id => _sessions[id]).Select(session => new OpenSessionSettings(
+                session.Id,
+                session.WorkspaceId,
+                session.DisplayName,
+                session.ActiveTool,
+                session.SplitTool,
+                session.SplitWidth)),
+            _activeSessionId);
     }
 
     private void BuildSessionTab(WorkspaceSession session)
@@ -957,15 +1167,117 @@ internal sealed class AppController : IDisposable
             previous.Terminal.Unfocus();
         }
         _activeSessionId = sessionId;
-        if (_sessionContentHost is not null)
-        {
-            _sessionContentHost.Children.Clear();
-            _sessionContentHost.Children.Add(session.Terminal);
-        }
         if (_commandEditor is not null) _commandEditor.Value = session.CommandDraft;
         SetCommandPanelExpanded(session.CommandPanelExpanded);
+        RenderToolLayout(session);
         RenderActiveSession();
+        if (!_restoringWorkspace) SaveOpenSessions();
     }
+
+    private void RenderToolLayout(WorkspaceSession session)
+    {
+        if (_sessionTabsRoot is not null) _sessionTabsRoot.IsVisible = true;
+        if (_sessionToolTabsRoot is not null) _sessionToolTabsRoot.IsVisible = true;
+        if (_sessionContextStatusRoot is not null) _sessionContextStatusRoot.IsVisible = true;
+        SetToolTabState(_terminalToolButton, session.ActiveTool == SessionToolKind.Terminal);
+        SetToolTabState(_sftpToolButton, session.ActiveTool == SessionToolKind.Sftp);
+        SetToolTabState(_portForwardingToolButton, session.ActiveTool == SessionToolKind.PortForwarding);
+        SetToolTabState(_sessionInfoToolButton, session.ActiveTool == SessionToolKind.SessionInfo);
+
+        if (_terminalToolbarRoot is not null)
+            _terminalToolbarRoot.IsVisible = session.ActiveTool == SessionToolKind.Terminal;
+        if (_commandEntryButton is not null)
+        {
+            _commandEntryButton.IsVisible = session.ActiveTool == SessionToolKind.Terminal;
+            _commandEntryButton.TextContent = session.CommandPanelVisible ? "收起命令" : "多行命令";
+        }
+        if (_bottomPanel is not null)
+            _bottomPanel.IsVisible = session.ActiveTool == SessionToolKind.Terminal && session.CommandPanelVisible;
+
+        RenderToolInHost(session, session.ActiveTool, _sessionContentHost);
+
+        var splitVisible = session.SplitTool is not null;
+        if (_toolSplit is not null)
+        {
+            _toolSplit.IsVisible = splitVisible;
+            _toolSplit.Value = session.SplitWidth;
+        }
+        if (_secondaryToolHost is not null)
+        {
+            _secondaryToolHost.IsVisible = splitVisible;
+            _secondaryToolHost.Children.Clear();
+            if (session.SplitTool is { } splitTool)
+            {
+                ApplyToolSplitWidth(session.SplitWidth);
+                RenderToolInHost(session, splitTool, _secondaryToolHost);
+            }
+        }
+        if (_closeSplitButton is not null) _closeSplitButton.IsVisible = splitVisible;
+
+        SetText(_sessionStatus, BuildToolStatus(session), session.StatusColor);
+        if (_sessionStatusIcon is not null)
+        {
+            _sessionStatusIcon.Glyph = session.State == SessionState.Connected ? FluentGlyphs.CheckMark :
+                session.State == SessionState.Connecting ? FluentGlyphs.Sync :
+                session.State == SessionState.Failed ? FluentGlyphs.Error : FluentGlyphs.Connect;
+            _sessionStatusIcon.Style.Set("color", session.StatusColor);
+        }
+    }
+
+    private static void SetToolTabState(Button? button, bool active)
+    {
+        if (button is null) return;
+        button.ClassList.Toggle("active", active);
+        button.Style.Set("background", active ? "#172130" : "#0d131a");
+        button.Style.Set("color", active ? "#ffffff" : "#8d9aae");
+        button.Style.Set("border", "0");
+        button.Style.Set("border-bottom", active ? "2px solid #4f8cff" : "2px solid transparent");
+        button.Style.Set("border-radius", "5px 5px 0 0");
+    }
+
+    private void RenderToolInHost(WorkspaceSession session, SessionToolKind tool, View? host)
+    {
+        if (host is null) return;
+        Element content = tool switch
+        {
+            SessionToolKind.Terminal => session.Terminal,
+            SessionToolKind.Sftp => _sftpToolRoot ?? BuildEmptyState("SFTP 不可用", "文件浏览器尚未初始化。"),
+            SessionToolKind.PortForwarding => session.PortForwardingPanel ??= BuildPortForwardingPanel(),
+            SessionToolKind.SessionInfo => _sessionInfoRoot ?? BuildEmptyState("会话信息不可用", "会话检查器尚未初始化。"),
+            _ => session.Terminal
+        };
+
+        if (tool == SessionToolKind.SessionInfo)
+        {
+            if (session.PendingHostKey is not null) ShowSecurityContext();
+            else ShowHistoryContext();
+        }
+        if (content.ParentNode is Element parent) parent.Children.Remove(content);
+        host.Children.Clear();
+        host.Children.Add(content);
+    }
+
+    private static View BuildPortForwardingPanel()
+    {
+        var panel = Panel("#10161e", "column", "100%", "100%");
+        panel.Style.Set("padding", "12px");
+        panel.Children.Add(BuildEmptyState("映射端口", "当前会话尚未配置本地、远程或动态端口映射。"));
+        return panel;
+    }
+
+    private static string BuildToolStatus(WorkspaceSession session) => session.ActiveTool switch
+    {
+        SessionToolKind.Terminal when session.State == SessionState.Connected =>
+            $"已连接 {session.Profile.Username}@{session.Profile.Host}:{session.Profile.Port}  |  UTF-8  |  {session.Terminal.Columns}x{session.Terminal.Rows}",
+        SessionToolKind.Terminal => session.StatusText,
+        SessionToolKind.Sftp when session.State == SessionState.Connected =>
+            $"SFTP 已连接  |  {session.CurrentRemotePath}  |  当前无传输任务",
+        SessionToolKind.Sftp => $"SFTP 未连接  |  {session.StatusText}",
+        SessionToolKind.PortForwarding when session.State == SessionState.Connected =>
+            "端口映射  |  当前无活动映射",
+        SessionToolKind.PortForwarding => $"端口映射不可用  |  {session.StatusText}",
+        _ => session.StatusText
+    };
 
     private async Task CloseSessionAsync(WorkspaceSession session)
     {
@@ -979,11 +1291,12 @@ internal sealed class AppController : IDisposable
                 if (session.TabContainer?.ParentNode is Element parent) parent.Children.Remove(session.TabContainer);
                 if (session.Terminal.ParentNode is Element terminalParent) terminalParent.Children.Remove(session.Terminal);
                 _sessions.Remove(session.Id);
+                _sessionOrder.Remove(session.Id);
                 session.LifecycleGate.Dispose();
                 session.OutboundGate.Dispose();
                 if (_activeSessionId == session.Id)
                 {
-                    _activeSessionId = _sessions.Keys.LastOrDefault();
+                    _activeSessionId = _sessionOrder.LastOrDefault();
                     if (_activeSessionId is Guid next && next != Guid.Empty) ActivateSession(next);
                     else
                     {
@@ -996,6 +1309,7 @@ internal sealed class AppController : IDisposable
                         RenderActiveSession();
                     }
                 }
+                SaveOpenSessions();
             }).ConfigureAwait(false);
         }
         catch
@@ -1052,14 +1366,20 @@ internal sealed class AppController : IDisposable
         _disconnectButton?.ClassList.Toggle("not-ready", !connected && !connecting);
         _refreshFilesButton?.ClassList.Toggle("not-ready", !connected);
         _sendButton?.ClassList.Toggle("not-ready", !connected);
-        if (_bottomPanel is not null) _bottomPanel.IsVisible = connected;
         if (_commandEditor is not null && session is null) _commandEditor.Value = "";
         RenderProtocolTools(session);
         if (session is null)
         {
-            if (_sessionTabStatusHost is not null) _sessionTabStatusHost.IsVisible = false;
-            SetText(_sessionTabStatus, "选择左侧连接后建立会话", "#718096");
             SetText(_sessionStatus, "就绪 - 请选择连接", "#9aa7b8");
+            if (_sessionTabsRoot is not null) _sessionTabsRoot.IsVisible = false;
+            if (_sessionToolTabsRoot is not null) _sessionToolTabsRoot.IsVisible = false;
+            if (_sessionContextStatusRoot is not null) _sessionContextStatusRoot.IsVisible = false;
+            if (_terminalToolbarRoot is not null) _terminalToolbarRoot.IsVisible = false;
+            if (_commandEntryButton is not null) _commandEntryButton.IsVisible = false;
+            if (_closeSplitButton is not null) _closeSplitButton.IsVisible = false;
+            if (_bottomPanel is not null) _bottomPanel.IsVisible = false;
+            if (_toolSplit is not null) _toolSplit.IsVisible = false;
+            if (_secondaryToolHost is not null) _secondaryToolHost.IsVisible = false;
             SetTrustButtons(false);
             ShowHistoryContext();
             return;
@@ -1069,28 +1389,21 @@ internal sealed class AppController : IDisposable
 
     private void RenderSession(WorkspaceSession session)
     {
-        if (_sessionTabStatusHost is not null) _sessionTabStatusHost.IsVisible = true;
         UpdateSessionTab(session);
         if (_activeSessionId != session.Id) return;
         var connected = session.State == SessionState.Connected;
-        var connecting = session.State == SessionState.Connecting;
-        SetText(_sessionTabStatus, session.StatusText, session.StatusColor);
-        SetText(_sessionStatus,
-            connected ? $"已连接  |  {session.DisplayName}  |  {session.Terminal.Columns}x{session.Terminal.Rows}" : session.StatusText,
-            session.StatusColor);
-        if (_sessionTabStatusIcon is not null)
-        {
-            _sessionTabStatusIcon.Glyph = connected ? FluentGlyphs.CheckMark : connecting ? FluentGlyphs.Sync :
-                session.State == SessionState.Failed ? FluentGlyphs.Error : FluentGlyphs.Connect;
-            _sessionTabStatusIcon.Style.Set("color", session.StatusColor);
-        }
         SetText(_details, session.DetailsText, session.PendingHostKey is null ? "#c6d0df" : "#f6c66b");
         SetTrustButtons(session.PendingHostKey is not null);
-        if (session.PendingHostKey is not null) ShowSecurityContext();
-        else if (connected) ShowSftpContext(session.Profile);
+        if (session.PendingHostKey is not null)
+        {
+            ShowSecurityContext();
+            if (session.ActiveTool != SessionToolKind.SessionInfo && session.SplitTool != SessionToolKind.SessionInfo)
+                session.ActiveTool = SessionToolKind.SessionInfo;
+        }
         else ShowHistoryContext();
         if (_sftpPathText is not null) _sftpPathText.TextContent = session.CurrentRemotePath;
         if (connected && !ReferenceEquals(session.SftpRoot?.ParentNode, _sftpTree)) RenderSftpTree(session);
+        RenderToolLayout(session);
         RenderActiveSessionControls(session);
     }
 
@@ -1102,7 +1415,8 @@ internal sealed class AppController : IDisposable
         _disconnectButton?.ClassList.Toggle("not-ready", !connected && !connecting);
         _refreshFilesButton?.ClassList.Toggle("not-ready", !connected);
         _sendButton?.ClassList.Toggle("not-ready", !connected);
-        if (_bottomPanel is not null) _bottomPanel.IsVisible = connected;
+        if (_bottomPanel is not null)
+            _bottomPanel.IsVisible = session.ActiveTool == SessionToolKind.Terminal && session.CommandPanelVisible;
         RenderProtocolTools(session);
     }
 
@@ -1110,10 +1424,14 @@ internal sealed class AppController : IDisposable
     {
         if (session.TabButton is null) return;
         session.TabButton.TextContent = session.DisplayName;
-        session.TabButton.ClassList.Toggle("active", _activeSessionId == session.Id);
+        var active = _activeSessionId == session.Id;
+        session.TabButton.ClassList.Toggle("active", active);
         session.TabButton.ClassList.Toggle("connected", session.State == SessionState.Connected);
         session.TabButton.ClassList.Toggle("connecting", session.State == SessionState.Connecting);
         session.TabButton.ClassList.Toggle("failed", session.State == SessionState.Failed);
+        session.TabButton.Style.Set("background", active ? "#20324b" : "#182230");
+        session.TabButton.Style.Set("color", active ? "#ffffff" : "#dfe7f2");
+        session.TabButton.Style.Set("border-bottom", active ? "2px solid #4f8cff" : "2px solid transparent");
         session.TabButton.Tooltip = session.StatusText;
     }
 
@@ -1126,7 +1444,7 @@ internal sealed class AppController : IDisposable
         if ((profile.Capabilities & ConnectionCapabilities.FileBrowser) != 0)
             _protocolToolsHost.Children.Add(IconButton(FluentGlyphs.Folder, "打开 SFTP 文件", () =>
             {
-                if (session is not null) ShowSftpContext(session.Profile);
+                if (session is not null) ActivateSessionTool(SessionToolKind.Sftp);
             }));
         if (profile.Protocol == ConnectionProtocol.Rdp ||
             (profile.Capabilities & ConnectionCapabilities.RemoteDesktop) != 0 && profile.Port == 3389)
@@ -1651,11 +1969,6 @@ internal sealed class AppController : IDisposable
         SetRightContext(FluentGlyphs.History, "历史记录", "本次运行", history: true);
     }
 
-    private void ShowSftpContext(ConnectionProfile profile)
-    {
-        SetRightContext(FluentGlyphs.Folder, "SFTP 文件", profile.Name, sftp: true);
-    }
-
     private void ShowSecurityContext()
     {
         SetRightContext(FluentGlyphs.Lock, "安全确认", "主机密钥", security: true);
@@ -1666,14 +1979,12 @@ internal sealed class AppController : IDisposable
         string title,
         string subtitle,
         bool history = false,
-        bool sftp = false,
         bool security = false)
     {
         if (_rightPanelIcon is not null) _rightPanelIcon.Glyph = glyph;
         SetText(_rightPanelTitle, title, "#e7edf5");
         SetText(_rightPanelSubtitle, subtitle, "#718096");
         if (_historyPanel is not null) _historyPanel.IsVisible = history;
-        if (_sftpPanel is not null) _sftpPanel.IsVisible = sftp;
         if (_securityPanel is not null) _securityPanel.IsVisible = security;
     }
 
@@ -1733,17 +2044,11 @@ internal sealed class AppController : IDisposable
         }
         if (_connectionTree?.SelectedItem is ConnectionProfileTreeItem item)
             _ = OpenSessionAsync(item.Profile, displayName: item.TextContent,
-                forceNew: item.WorkspaceId != item.Profile.Id.ToString("D"));
+                forceNew: item.WorkspaceId != item.Profile.Id.ToString("D"), workspaceId: item.WorkspaceId);
         else
             _ = OpenSessionAsync(_selectedProfile);
     }
 
-    private static void TogglePanel(Element? panel, Splitter? splitter = null)
-    {
-        if (panel is null) return;
-        panel.IsVisible = !panel.IsVisible;
-        if (splitter is not null) splitter.IsVisible = panel.IsVisible;
-    }
 
     private void ToggleLeftSidebar()
     {
@@ -1756,26 +2061,12 @@ internal sealed class AppController : IDisposable
         ApplyResponsiveLayout(_window!.ClientSize);
     }
 
-    private void ToggleRightSidebar()
-    {
-        if (_window?.ClientSize.Width < 1180)
-        {
-            _ = SetStatusAsync("当前窗口过窄，放大后可显示远程检查器", "#f6c66b");
-            return;
-        }
-        _rightSidebarRequested = !_rightSidebarRequested;
-        ApplyResponsiveLayout(_window!.ClientSize);
-    }
-
     private void ApplyResponsiveLayout(Square.Graphics.Size size)
     {
         if (size.Width <= 0 || size.Height <= 0) return;
         var showLeft = _leftSidebarRequested && size.Width >= 760;
-        var showRight = _rightSidebarRequested && size.Width >= 1180;
         if (_leftSidebar is not null) _leftSidebar.IsVisible = showLeft;
         if (_leftSplitter is not null) _leftSplitter.IsVisible = showLeft;
-        if (_rightSidebar is not null) _rightSidebar.IsVisible = showRight;
-        if (_rightSplitter is not null) _rightSplitter.IsVisible = showRight;
     }
 
     private static MenuItem MenuCommand(string title, Action action) => new()

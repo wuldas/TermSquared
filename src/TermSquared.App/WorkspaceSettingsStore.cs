@@ -20,6 +20,8 @@ internal sealed class WorkspaceSettingsStore
 
     public IReadOnlyList<ConnectionFolderSettings> Folders => _settings.Folders;
     public IReadOnlyDictionary<string, ConnectionItemSettings> Connections => _settings.Connections;
+    public IReadOnlyList<OpenSessionSettings> OpenSessions => _settings.OpenSessions;
+    public Guid? ActiveSessionId => _settings.ActiveSessionId;
 
     public static WorkspaceSettingsStore Load(string path)
     {
@@ -140,6 +142,13 @@ internal sealed class WorkspaceSettingsStore
             ? settings.DisplayName
             : fallback;
 
+    public void SaveOpenSessions(IEnumerable<OpenSessionSettings> sessions, Guid? activeSessionId)
+    {
+        _settings.OpenSessions = sessions.ToList();
+        _settings.ActiveSessionId = activeSessionId;
+        Save();
+    }
+
     private ConnectionItemSettings GetConnection(string workspaceId)
     {
         if (_settings.Connections.TryGetValue(workspaceId, out var settings)) return settings;
@@ -175,6 +184,8 @@ internal sealed class WorkspaceSettingsStore
     {
         public List<ConnectionFolderSettings> Folders { get; set; } = [];
         public Dictionary<string, ConnectionItemSettings> Connections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<OpenSessionSettings> OpenSessions { get; set; } = [];
+        public Guid? ActiveSessionId { get; set; }
     }
 }
 
