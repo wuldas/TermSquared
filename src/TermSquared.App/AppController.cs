@@ -307,6 +307,18 @@ internal sealed class AppController : IDisposable
         ConfigureIconButton(page.SftpMoreButton, FluentGlyphs.More, "所选文件菜单", OpenSelectedSftpMenu);
         ConfigureIconButton(page.RefreshSftpButton, FluentGlyphs.Refresh, "刷新 SFTP",
             () => _ = RefreshSftpAsync());
+        foreach (var button in new[]
+                 {
+                     page.NewRemoteFolderButton,
+                     page.UploadRemoteFileButton,
+                     page.SftpMoreButton,
+                     page.RefreshSftpButton
+                 })
+        {
+            button.Style.Set("width", "26px");
+            button.Style.Set("height", "26px");
+            button.Style.Set("font-size", "13px");
+        }
         page.SftpTree.AddEventListener(StandardEvents.SelectionChange, SelectSftpTreeItem);
         page.SftpTree.AddEventListener("expand", e =>
         {

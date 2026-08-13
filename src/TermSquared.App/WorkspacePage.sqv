@@ -16,7 +16,7 @@ using Text = Square.Controls.Text;
 
 public Element BottomPanel => Center.CommandPanel;
 public View LeftSidebarRoot => LeftSidebar.Root;
-public View RightSidebarRoot => Center.ToolInspector.Root;
+public Element RightSidebarRoot => Center.ToolInspector;
 
 public FontIcon ConnectionHeaderIcon => LeftSidebar.HeaderIcon;
 public FontIcon CommandPanelIcon => Center.CommandPanel.PanelIcon;
@@ -84,7 +84,7 @@ public Button TrustOnceButton => Center.SessionInfo.TrustOnceButton;
 public Button TrustStoreButton => Center.SessionInfo.TrustStoreButton;
 public Text SessionStatus => Center.SessionStatus;
 public View SessionContextStatusRoot => Center.SessionContextStatusRoot;
-public View SessionInfoRoot => Center.SessionInfo.Root;
+public Element SessionInfoRoot => Center.SessionInfo;
 public Text RightPanelTitle => Center.SessionInfo.PanelTitle;
 public Text RightPanelSubtitle => Center.SessionInfo.PanelSubtitle;
 </script>

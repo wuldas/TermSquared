@@ -1,6 +1,8 @@
+using Square.CSS.Engine;
 using Square.Controls;
 using Square.UI;
 using TermSquared.App;
+using TermSquared.App.Components;
 
 namespace TermSquared.App.Tests;
 
@@ -20,8 +22,38 @@ public sealed class WorkspaceLayoutTests
         Assert.NotNull(page.PrimaryToolHost);
         Assert.NotNull(page.SecondaryToolHost);
         Assert.NotNull(page.SessionStatus);
+        Assert.IsType<InspectorSidebar>(page.RightSidebarRoot);
+        Assert.IsType<SessionInfoPanel>(page.SessionInfoRoot);
+        Assert.Equal("/", page.SftpPathText.TextContent);
+        Assert.Contains(Descendants(page), element => element.ClassList.Contains("sftp-toolbar"));
+        Assert.Contains(Descendants(page), element => element.ClassList.Contains("sftp-location"));
+        Assert.True(page.RefreshSftpButton.ClassList.Contains("sftp-icon-button"));
         Assert.Equal("多行命令", page.CommandEntryButton.TextContent);
         Assert.DoesNotContain(Descendants(page), element => element.ClassList.Contains("status-chip"));
+    }
+
+    [Fact]
+    public void MovingSftpToolPreservesItsScopedLayoutStyles()
+    {
+        var page = new WorkspacePage();
+        page.BuildElementTree();
+        try
+        {
+            var tool = page.RightSidebarRoot;
+            if (tool.ParentNode is Element parent) parent.Children.Remove(tool);
+            page.PrimaryToolHost.Children.Clear();
+            page.PrimaryToolHost.Children.Add(tool);
+
+            CssStyleReconciler.Flush();
+
+            Assert.Equal("row", page.RefreshSftpButton.Parent!.Style.Get("flex-direction"));
+            Assert.Equal("26px", page.RefreshSftpButton.Style.Get("width"));
+            Assert.Equal("flex", page.SftpPathText.Parent!.Style.Get("display"));
+        }
+        finally
+        {
+            CssStyleReconciler.UnregisterScopesForTree(page);
+        }
     }
 
     private static IEnumerable<Element> Descendants(Element root)

@@ -6,12 +6,21 @@
       <Text ref="PanelSubtitle" class="panel-subtitle" text="当前会话" />
     </View>
     <View ref="SftpPanel" class="right-context-panel">
-      <View class="sftp-path-bar">
-        <Text ref="SftpPathText" class="sftp-path-text" text="/" />
-        <Button ref="NewRemoteFolderButton" class="icon-button" text="" />
-        <Button ref="UploadRemoteFileButton" class="icon-button" text="" />
-        <Button ref="SftpMoreButton" class="icon-button" text="" />
-        <Button ref="RefreshSftpButton" class="icon-button" text="" />
+      <View class="sftp-toolbar">
+        <View class="sftp-location">
+          <FontIcon class="sftp-location-icon" font-family="Segoe Fluent Icons" glyph="" />
+          <Text ref="SftpPathText" class="sftp-path-text" text="/" />
+        </View>
+        <View class="sftp-actions">
+          <Button ref="NewRemoteFolderButton" class="icon-button sftp-icon-button" text="" />
+          <Button ref="UploadRemoteFileButton" class="icon-button sftp-icon-button" text="" />
+          <Button ref="SftpMoreButton" class="icon-button sftp-icon-button" text="" />
+          <Button ref="RefreshSftpButton" class="icon-button sftp-icon-button" text="" />
+        </View>
+      </View>
+      <View class="sftp-tree-caption">
+        <Text class="sftp-tree-title" text="远程文件" />
+        <Text class="sftp-tree-hint" text="选择项目后可进行更多操作" />
       </View>
       <Tree ref="SftpTree" class="sftp-tree" />
     </View>
@@ -22,12 +31,19 @@
 <style>
   .sidebar { display: flex; flex-direction: column; height: 100%; gap: 0; }
   .sidebar-right { width: 100%; }
-  .panel-header { display: flex; flex-direction: row; align-items: center; width: 100%; height: 48px; padding: 8px 12px; gap: 8px; }
+  .panel-header { display: flex; flex-direction: row; align-items: center; width: 100%; height: 44px; padding: 7px 12px; gap: 8px; border-bottom: 1px solid #253040; }
   .panel-title { flex: 1; color: #e7edf5; font-size: 14px; }
   .panel-subtitle { flex-shrink: 0; color: #718096; white-space: nowrap; }
   .right-context-panel { display: flex; flex: 1; flex-direction: column; width: 100%; height: auto; min-height: 0; gap: 0; }
-  .icon-button { width: 34px; height: 30px; padding: 0; font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets'; font-size: 16px; }
-  .sftp-path-bar { display: flex; flex-direction: row; align-items: center; width: 100%; height: 44px; padding: 6px 8px 6px 12px; gap: 6px; }
-  .sftp-path-text { flex: 1; color: #dfe7f2; }
-  .sftp-tree { display: flex; flex: 1; min-height: 0; padding: 6px 8px 12px 8px; }
+  .sftp-toolbar { display: flex; flex-direction: row; align-items: center; width: 100%; height: 40px; padding: 5px 10px; gap: 7px; background: #111821; border-bottom: 1px solid #253040; }
+  .sftp-location { display: flex; flex: 1; flex-direction: row; align-items: center; width: auto; height: 32px; min-width: 0; padding: 0 9px; gap: 7px; overflow: hidden; background: #0b1118; border: 1px solid #2b394c; border-radius: 6px; }
+  .sftp-location-icon { flex-shrink: 0; width: 14px; height: 14px; color: #8fb6ff; font-size: 14px; }
+  .sftp-path-text { flex: 1; min-width: 0; color: #dfe7f2; font-size: 12px; white-space: nowrap; }
+  .sftp-actions { display: flex; flex-direction: row; align-items: center; width: auto; height: 28px; gap: 2px; }
+  .icon-button { width: 30px; height: 30px; padding: 0; font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets'; font-size: 15px; }
+  .sftp-icon-button { width: 26px; height: 26px; font-size: 13px; }
+  .sftp-tree-caption { display: flex; flex-direction: row; align-items: center; width: 100%; height: 30px; padding: 7px 12px 3px 12px; gap: 8px; }
+  .sftp-tree-title { flex: 1; color: #cbd6e5; font-size: 12px; font-weight: 700; }
+  .sftp-tree-hint { flex-shrink: 0; color: #718096; font-size: 11px; white-space: nowrap; }
+  .sftp-tree { display: flex; flex: 1; min-height: 0; padding: 4px 10px 12px 10px; background: #10161e; }
 </style>
