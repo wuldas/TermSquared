@@ -6,19 +6,82 @@
       <Text class="panel-subtitle" text="SSH 配置" />
     </View>
     <View class="connection-filter-area">
-      <Input ref="ConnectionFilter" class="connection-filter" placeholder="按名称、主机或用户筛选" />
+      <Input ref="ConnectionFilter" class="connection-filter" placeholder="按名称、主机或用户筛选" @input="OnFilterChanged" />
     </View>
     <View class="tree-toolbar">
-      <Button ref="AddConnectionButton" class="tree-action" text="新增" />
-      <Button ref="EditConnectionButton" class="tree-action" text="编辑" />
-      <Button ref="NewFolderButton" class="icon-button" text="" />
-      <Button ref="ConnectionMoreButton" class="icon-button" text="" />
+      <Button ref="AddConnectionButton" class="tree-action" text="新增" @click="OnAddRequested" />
+      <Button ref="EditConnectionButton" class="tree-action" text="编辑" @click="OnEditRequested" />
+      <Button ref="NewFolderButton" class="icon-button" text="" @click="OnNewFolderRequested" />
+      <Button ref="ConnectionMoreButton" class="icon-button" text="" @click="OnMoreRequested" />
     </View>
-    <Tree ref="ConnectionTree" class="connection-tree" />
+    <Tree ref="ConnectionTree" class="connection-tree"
+          @selectionchange="OnSelectionChanged"
+          @click="OnTreeClick"
+          @contextmenu="OnContextMenuRequested"
+          @keydown="OnTreeKeyDown" />
     <Text ref="ConnectionEmptyState" class="connection-empty-state" text="" />
   </View>
 </template>
 <script lang="csharp" namespace="TermSquared.App.Components" name="ConnectionSidebar" access="internal">
+using TermSquared.App;
+
+public static readonly ComponentEvent<string> FilterChangedEvent = new("filter-changed");
+public static readonly ComponentEvent AddConnectionRequestedEvent = new("add-connection-requested");
+public static readonly ComponentEvent EditConnectionRequestedEvent = new("edit-connection-requested");
+public static readonly ComponentEvent NewFolderRequestedEvent = new("new-folder-requested");
+public static readonly ComponentEvent MoreRequestedEvent = new("more-requested");
+public static readonly ComponentEvent SelectionChangedEvent = new("selection-changed");
+public static readonly ComponentEvent OpenRequestedEvent = new("open-requested");
+public static readonly ComponentEvent<ConnectionContextMenuRequest> ContextMenuRequestedEvent = new("context-menu-requested");
+
+private void OnFilterChanged() => Emit(FilterChangedEvent, ConnectionFilter.Value);
+private void OnAddRequested() => Emit(AddConnectionRequestedEvent);
+private void OnEditRequested() => Emit(EditConnectionRequestedEvent);
+private void OnNewFolderRequested() => Emit(NewFolderRequestedEvent);
+private void OnMoreRequested() => Emit(MoreRequestedEvent);
+private void OnSelectionChanged() => Emit(SelectionChangedEvent);
+
+private void OnTreeClick(Event e)
+{
+    if (ConnectionTree.SelectedItem is not ConnectionProfileTreeItem item) return;
+    if (e.TimeStamp - item.LastClickTime <= 500)
+    {
+        item.LastClickTime = 0;
+        Emit(OpenRequestedEvent);
+    }
+    else item.LastClickTime = e.TimeStamp;
+}
+
+private void OnContextMenuRequested(Event e)
+{
+    if (e is not PointerEvent pointer) return;
+    if (FindTreeItem(e.Target) is not { } item) return;
+    ConnectionTree.SelectItem(item);
+    Emit(ContextMenuRequestedEvent, new ConnectionContextMenuRequest(new Point(pointer.ClientX, pointer.ClientY)));
+    e.PreventDefault();
+}
+
+private void OnTreeKeyDown(Event e)
+{
+    if (e is not KeyboardEvent keyboard) return;
+    if (keyboard.KeyCode == 13 && ConnectionTree.SelectedItem is ConnectionProfileTreeItem)
+    {
+        e.PreventDefault();
+        Emit(OpenRequestedEvent);
+    }
+    else if (keyboard.KeyCode == 93 || keyboard.ShiftKey && keyboard.KeyCode == 121)
+    {
+        e.PreventDefault();
+        Emit(ContextMenuRequestedEvent, new ConnectionContextMenuRequest(null));
+    }
+}
+
+private static TreeItem? FindTreeItem(EventTarget? target)
+{
+    for (var current = target as Element; current is not null; current = current.Parent)
+        if (current is TreeItem item) return item;
+    return null;
+}
 </script>
 <style>
   .sidebar { display: flex; flex-direction: column; height: 100%; gap: 0; }

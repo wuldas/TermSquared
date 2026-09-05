@@ -14,6 +14,7 @@ using TermSquared.Protocols.Ssh;
 using TermSquared.Protocols.Vnc;
 using TermSquared.Mcp;
 using TermSquared.Security;
+using TermSquared.App.Components;
 using Element = Square.UI.Element;
 using UIElement = Square.UI.UIElement;
 
@@ -45,15 +46,17 @@ internal sealed class AppController : IDisposable
     private Splitter? _leftSplitter;
     private Splitter? _toolSplit;
     private Tree? _connectionTree;
-    private Tree? _sftpTree;
+    private VirtualList? _sftpFileList;
     private View? _sessionTabsHost;
     private View? _sessionTabsRoot;
     private View? _sessionToolTabsRoot;
+    private SessionTabs? _sessionTabsComponent;
     private View? _sessionContextStatusRoot;
     private View? _sessionContentHost;
     private View? _secondaryToolHost;
     private View? _terminalToolbarRoot;
     private View? _protocolToolsHost;
+    private TerminalToolbar? _terminalToolbarComponent;
     private Text? _connectionEmptyState;
     private View? _hostKeyApproval;
     private View? _historyPanel;
@@ -63,7 +66,7 @@ internal sealed class AppController : IDisposable
     private CodeEditor? _commandEditor;
     private Text? _sessionStatus;
     private Text? _details;
-    private Text? _sftpPathText;
+    private Input? _sftpPathInput;
     private Text? _rightPanelTitle;
     private Text? _rightPanelSubtitle;
     private FontIcon? _sessionStatusIcon;
@@ -73,10 +76,13 @@ internal sealed class AppController : IDisposable
     private Button? _disconnectButton;
     private Button? _refreshFilesButton;
     private Button? _sendButton;
-    private Button? _clearCommandsButton;
     private Button? _expandCommandsButton;
     private Button? _terminalToolButton;
     private Button? _sftpToolButton;
+    private Button? _sftpBackButton;
+    private Button? _sftpForwardButton;
+    private Button? _sftpUpButton;
+    private Button? _sftpMoreButton;
     private Button? _portForwardingToolButton;
     private Button? _sessionInfoToolButton;
     private Button? _commandEntryButton;
@@ -87,11 +93,13 @@ internal sealed class AppController : IDisposable
     private Guid? _activeSessionId;
     private RemoteClipboardItem? _remoteClipboard;
     private bool _hasHistory;
-    private string? _commandTextBeforeShortcut;
-    private Guid? _commandShortcutSessionId;
+
     private bool _leftSidebarRequested = true;
+    private Guid? _boundSftpSessionId;
+    private IReadOnlyList<RemoteEntry>? _boundSftpEntries;
     private bool _restoringWorkspace;
     private WorkspaceSession? _restoredActiveSession;
+    private readonly List<IDisposable> _componentSubscriptions = [];
     private bool _disposed;
 
     public AppController(ImportedConfiguration configuration, string configPath)
@@ -137,15 +145,17 @@ internal sealed class AppController : IDisposable
         _leftSplitter = page.LeftSplitter;
         _toolSplit = page.ToolSplit;
         _connectionTree = page.ConnectionTree;
-        _sftpTree = page.SftpTree;
+        _sftpFileList = page.SftpFileList;
         _sessionTabsHost = page.SessionTabsHost;
         _sessionTabsRoot = page.SessionTabsRoot;
         _sessionToolTabsRoot = page.SessionToolTabsRoot;
+        _sessionTabsComponent = page.SessionTabsComponent;
         _sessionContextStatusRoot = page.SessionContextStatusRoot;
         _sessionContentHost = page.SessionContentHost;
         _secondaryToolHost = page.SecondaryToolHost;
         _terminalToolbarRoot = page.TerminalToolbarRoot;
         _protocolToolsHost = page.ProtocolToolsHost;
+        _terminalToolbarComponent = page.TerminalToolbarComponent;
         _connectionEmptyState = page.ConnectionEmptyState;
         _hostKeyApproval = page.HostKeyApproval;
         _historyPanel = page.HistoryPanel;
@@ -155,7 +165,7 @@ internal sealed class AppController : IDisposable
         _commandEditor = page.CommandEditor;
         _sessionStatus = page.SessionStatus;
         _details = page.Details;
-        _sftpPathText = page.SftpPathText;
+        _sftpPathInput = page.SftpPathInput;
         _rightPanelTitle = page.RightPanelTitle;
         _rightPanelSubtitle = page.RightPanelSubtitle;
         _sessionStatusIcon = page.SessionStatusIcon;
@@ -165,10 +175,13 @@ internal sealed class AppController : IDisposable
         _disconnectButton = page.DisconnectButton;
         _refreshFilesButton = page.RefreshFilesButton;
         _sendButton = page.SendButton;
-        _clearCommandsButton = page.ClearCommandsButton;
         _expandCommandsButton = page.ExpandCommandsButton;
         _terminalToolButton = page.TerminalToolButton;
         _sftpToolButton = page.SftpToolButton;
+        _sftpBackButton = page.SftpBackButton;
+        _sftpForwardButton = page.SftpForwardButton;
+        _sftpUpButton = page.SftpUpButton;
+        _sftpMoreButton = page.SftpMoreButton;
         _portForwardingToolButton = page.PortForwardingToolButton;
         _sessionInfoToolButton = page.SessionInfoToolButton;
         _commandEntryButton = page.CommandEntryButton;
@@ -194,71 +207,22 @@ internal sealed class AppController : IDisposable
         page.LeftSplitter.ZIndex = 1000;
         page.ToolSplit.ZIndex = 1000;
 
-        page.ConnectMenuItem.Command = _ => RequestConnect();
-        page.DisconnectMenuItem.Command = _ => RequestDisconnect();
-        page.ExitMenuItem.Command = _ => _window?.Close();
-        page.ToggleLeftMenuItem.Command = _ => ToggleLeftSidebar();
-        page.ToggleRightMenuItem.Command = _ => ToggleSftpSplit();
-        page.ToggleBottomMenuItem.Command = _ => ToggleCommandPanelVisible();
-        page.RefreshRemoteMenuItem.Command = item => { _ = RefreshSftpAsync(); };
-        page.RestoreConnectionsMenuItem.Command = _ => RestoreHiddenConnections();
-        page.ProbeVncMenuItem.Command = item => { _ = ProbeVncAsync(); };
-        page.LaunchRdpMenuItem.Command = _ => LaunchRdp();
-        page.AboutMenuItem.Command = item =>
-        {
-            _ = SetStatusAsync("TermSquared - 安全优先的远程连接工作台", "#a8c7ff");
-        };
-
         page.ConnectionFilter.Tooltip = $"配置来源: {_configPath}";
-        page.ConnectionFilter.AddEventListener(StandardEvents.Input, ApplyConnectionFilter);
-        page.AddConnectionButton.AddEventListener(StandardEvents.Click, () => _ = CreateConnectionAsync());
-        page.EditConnectionButton.AddEventListener(StandardEvents.Click, () => _ = EditSelectedConnectionAsync());
-        ConfigureIconButton(page.NewFolderButton, FluentGlyphs.NewFolder, "新建连接文件夹",
-            () => _ = CreateConnectionFolderAsync());
-        ConfigureIconButton(page.ConnectionMoreButton, FluentGlyphs.More, "所选项菜单",
-            OpenSelectedConnectionMenu);
-
-        page.ConnectionTree.AddEventListener(StandardEvents.SelectionChange, SelectConnectionTreeItem);
-        page.ConnectionTree.AddEventListener<PointerEvent>(StandardEvents.ContextMenu, OpenConnectionContextMenu);
-        page.ConnectionTree.AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
-        {
-            if (e.KeyCode == 13 && page.ConnectionTree.SelectedItem is ConnectionProfileTreeItem profileItem)
-            {
-                e.PreventDefault();
-                _ = OpenSessionAsync(profileItem.Profile, workspaceId: profileItem.WorkspaceId);
-            }
-            else if (e.KeyCode == 93 || e.ShiftKey && e.KeyCode == 121)
-            {
-                e.PreventDefault();
-                OpenSelectedConnectionMenu();
-            }
-        });
-
         ConfigureIconButton(page.ConnectButton, FluentGlyphs.Connect, "连接或重新连接当前选择的 SSH 配置",
-            RequestConnect, "button-primary");
+            null, "button-primary");
         ConfigureIconButton(page.DisconnectButton, FluentGlyphs.Disconnect, "安全关闭当前终端和 SFTP 会话",
-            RequestDisconnect, "button-danger");
+            null, "button-danger");
         ConfigureIconButton(page.RefreshFilesButton, FluentGlyphs.Refresh, "读取远程根目录",
-            () => _ = RefreshSftpAsync());
+            null);
 
-        ConfigureIconButton(page.SendButton, FluentGlyphs.Send, "发送全部", SendCommands, "icon-button-primary");
-        ConfigureIconButton(page.ClearCommandsButton, FluentGlyphs.Delete, "清空命令", () =>
-        {
-            page.CommandEditor.Value = "";
-        });
+        ConfigureIconButton(page.SendButton, FluentGlyphs.Send, "发送全部", null, "icon-button-primary");
+        ConfigureIconButton(page.ClearCommandsButton, FluentGlyphs.Delete, "清空命令", null);
         ConfigureIconButton(page.ExpandCommandsButton, FluentGlyphs.ChevronUp, "展开命令面板",
-            ToggleCommandPanelExpanded);
-
-        ConfigureSessionToolButton(page.TerminalToolButton, SessionToolKind.Terminal);
-        ConfigureSessionToolButton(page.SftpToolButton, SessionToolKind.Sftp);
-        ConfigureSessionToolButton(page.PortForwardingToolButton, SessionToolKind.PortForwarding);
-        ConfigureSessionToolButton(page.SessionInfoToolButton, SessionToolKind.SessionInfo);
+            null);
         page.CommandEntryButton.Tooltip = "显示或隐藏多行命令编辑器";
         ConfigureStatusActionButton(page.CommandEntryButton);
-        page.CommandEntryButton.AddEventListener(StandardEvents.Click, ToggleCommandPanelVisible);
         page.CloseSplitButton.Tooltip = "关闭当前会话的右侧分屏";
         ConfigureStatusActionButton(page.CloseSplitButton);
-        page.CloseSplitButton.AddEventListener(StandardEvents.Click, CloseToolSplit);
 
         page.CommandEditor.Placeholder = "输入一行或多行命令。每行将依次发送到当前 SSH Shell。";
         page.CommandEditor.Language = "plaintext";
@@ -269,46 +233,31 @@ internal sealed class AppController : IDisposable
         page.CommandEditor.ShowOverviewRuler = false;
         page.CommandEditor.ShowScrollBars = true;
         page.CommandEditor.WordWrap = true;
-        page.CommandEditor.AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
-        {
-            if (e.KeyCode != 13 || !e.ControlKey) return;
-            _commandTextBeforeShortcut = page.CommandEditor.Value;
-            _commandShortcutSessionId = _activeSessionId;
-            e.PreventDefault();
-            SendCommands();
-        });
-        page.CommandEditor.AddEventListener(StandardEvents.Input, () =>
-        {
-            if (_commandTextBeforeShortcut is null) return;
-            if (_commandShortcutSessionId == _activeSessionId)
-                page.CommandEditor.Value = _commandTextBeforeShortcut;
-            _commandTextBeforeShortcut = null;
-            _commandShortcutSessionId = null;
-        });
-
         ConfigureSplitter(page.LeftSplitter, page.LeftSidebar, page.LeftSidebarRoot, 276, 230, 420);
         page.ToolSplit.Minimum = 280;
         page.ToolSplit.Maximum = 700;
         page.ToolSplit.Value = 360;
         page.ToolSplit.IsVertical = true;
         page.ToolSplit.IsReversed = true;
-        page.ToolSplit.AddEventListener(StandardEvents.Input, () =>
-        {
-            if (ActiveSession is not { } session) return;
-            session.SplitWidth = page.ToolSplit.Value;
-            ApplyToolSplitWidth(session.SplitWidth);
-        });
-        page.ToolSplit.AddEventListener(StandardEvents.Change, SaveOpenSessions);
 
+        ConfigureIconButton(page.SftpBackButton, FluentGlyphs.Back, "后退",
+            null);
+        ConfigureIconButton(page.SftpForwardButton, FluentGlyphs.Forward, "前进",
+            null);
+        ConfigureIconButton(page.SftpUpButton, FluentGlyphs.Up, "上级目录",
+            null);
         ConfigureIconButton(page.NewRemoteFolderButton, FluentGlyphs.NewFolder, "新建远程目录",
-            () => _ = CreateRemoteDirectoryAsync());
+            null);
         ConfigureIconButton(page.UploadRemoteFileButton, FluentGlyphs.Upload, "上传本地文件",
-            () => _ = UploadRemoteFileAsync());
-        ConfigureIconButton(page.SftpMoreButton, FluentGlyphs.More, "所选文件菜单", OpenSelectedSftpMenu);
+            null);
+        ConfigureIconButton(page.SftpMoreButton, FluentGlyphs.More, "所选文件菜单", null);
         ConfigureIconButton(page.RefreshSftpButton, FluentGlyphs.Refresh, "刷新 SFTP",
-            () => _ = RefreshSftpAsync());
+            null);
         foreach (var button in new[]
                  {
+                     page.SftpBackButton,
+                     page.SftpForwardButton,
+                     page.SftpUpButton,
                      page.NewRemoteFolderButton,
                      page.UploadRemoteFileButton,
                      page.SftpMoreButton,
@@ -319,25 +268,10 @@ internal sealed class AppController : IDisposable
             button.Style.Set("height", "26px");
             button.Style.Set("font-size", "13px");
         }
-        page.SftpTree.AddEventListener(StandardEvents.SelectionChange, SelectSftpTreeItem);
-        page.SftpTree.AddEventListener("expand", e =>
-        {
-            if (e.Target is SftpTreeItem item) _ = EnsureSftpChildrenAsync(item);
-        });
-        page.SftpTree.AddEventListener<PointerEvent>(StandardEvents.ContextMenu, OpenSftpContextMenu);
-        page.SftpTree.AddEventListener<KeyboardEvent>(StandardEvents.KeyDown, e =>
-        {
-            if (e.KeyCode == 93 || e.ShiftKey && e.KeyCode == 121)
-            {
-                e.PreventDefault();
-                OpenSelectedSftpMenu();
-            }
-        });
-
-        page.TrustOnceButton.AddEventListener(StandardEvents.Click,
-            () => _ = ConnectPendingAsync(HostKeyDecision.TrustOnce));
-        page.TrustStoreButton.AddEventListener(StandardEvents.Click,
-            () => _ = ConnectPendingAsync(HostKeyDecision.TrustAndStore));
+        page.SftpFileList.ItemHeight = 34;
+        ConfigureIconButton(page.NewFolderButton, FluentGlyphs.NewFolder, "新建连接文件夹", null);
+        ConfigureIconButton(page.ConnectionMoreButton, FluentGlyphs.More, "所选项菜单", null);
+        SubscribeComponentEvents(page);
         page.BottomPanel.IsVisible = false;
         page.ToolSplit.IsVisible = false;
         page.SecondaryToolHost.IsVisible = false;
@@ -349,6 +283,114 @@ internal sealed class AppController : IDisposable
         SetCommandPanelExpanded(false);
         SetTrustButtons(false);
         ShowHistoryContext();
+    }
+
+    private void SubscribeComponentEvents(WorkspacePage page)
+    {
+        _componentSubscriptions.Add(page.TopBarComponent.Listen(TopBar.ConnectRequestedEvent, RequestConnect));
+        _componentSubscriptions.Add(page.TopBarComponent.Listen(TopBar.DisconnectRequestedEvent, RequestDisconnect));
+        _componentSubscriptions.Add(page.TopBarComponent.Listen(TopBar.ExitRequestedEvent, () => _window?.Close()));
+        _componentSubscriptions.Add(page.TopBarComponent.Listen(TopBar.ToggleLeftRequestedEvent, ToggleLeftSidebar));
+        _componentSubscriptions.Add(page.TopBarComponent.Listen(TopBar.ToggleSftpSplitRequestedEvent, ToggleSftpSplit));
+        _componentSubscriptions.Add(page.TopBarComponent.Listen(TopBar.ToggleCommandPanelRequestedEvent, ToggleCommandPanelVisible));
+        _componentSubscriptions.Add(page.TopBarComponent.Listen(TopBar.RefreshRemoteRequestedEvent, () => _ = RefreshSftpAsync()));
+        _componentSubscriptions.Add(page.TopBarComponent.Listen(TopBar.RestoreConnectionsRequestedEvent, RestoreHiddenConnections));
+        _componentSubscriptions.Add(page.TopBarComponent.Listen(TopBar.ProbeVncRequestedEvent, () => _ = ProbeVncAsync()));
+        _componentSubscriptions.Add(page.TopBarComponent.Listen(TopBar.LaunchRdpRequestedEvent, LaunchRdp));
+        _componentSubscriptions.Add(page.TopBarComponent.Listen(TopBar.AboutRequestedEvent,
+            () => _ = SetStatusAsync("TermSquared - 安全优先的远程连接工作台", "#a8c7ff")));
+
+        _componentSubscriptions.Add(page.ConnectionSidebarComponent.Listen(ConnectionSidebar.FilterChangedEvent,
+            ApplyConnectionFilter));
+        _componentSubscriptions.Add(page.ConnectionSidebarComponent.Listen(ConnectionSidebar.AddConnectionRequestedEvent,
+            () => _ = CreateConnectionAsync()));
+        _componentSubscriptions.Add(page.ConnectionSidebarComponent.Listen(ConnectionSidebar.EditConnectionRequestedEvent,
+            () => _ = EditSelectedConnectionAsync()));
+        _componentSubscriptions.Add(page.ConnectionSidebarComponent.Listen(ConnectionSidebar.NewFolderRequestedEvent,
+            () => _ = CreateConnectionFolderAsync()));
+        _componentSubscriptions.Add(page.ConnectionSidebarComponent.Listen(ConnectionSidebar.MoreRequestedEvent,
+            OpenSelectedConnectionMenu));
+        _componentSubscriptions.Add(page.ConnectionSidebarComponent.Listen(ConnectionSidebar.SelectionChangedEvent,
+            SelectConnectionTreeItem));
+        _componentSubscriptions.Add(page.ConnectionSidebarComponent.Listen(ConnectionSidebar.OpenRequestedEvent,
+            OpenSelectedConnectionSession));
+        _componentSubscriptions.Add(page.ConnectionSidebarComponent.Listen(ConnectionSidebar.ContextMenuRequestedEvent,
+            OpenConnectionContextMenu));
+
+        _componentSubscriptions.Add(page.TerminalToolbarComponent.Listen(TerminalToolbar.ConnectRequestedEvent,
+            RequestConnect));
+        _componentSubscriptions.Add(page.TerminalToolbarComponent.Listen(TerminalToolbar.DisconnectRequestedEvent,
+            RequestDisconnect));
+        _componentSubscriptions.Add(page.TerminalToolbarComponent.Listen(TerminalToolbar.RefreshRequestedEvent,
+            () => _ = RefreshSftpAsync()));
+        _componentSubscriptions.Add(page.TerminalToolbarComponent.Listen(TerminalToolbar.ProtocolActionRequestedEvent,
+            HandleProtocolAction));
+
+        _componentSubscriptions.Add(page.CommandPanelComponent.Listen(CommandPanel.SendRequestedEvent,
+            e => SendCommands(e.Detail)));
+        _componentSubscriptions.Add(page.CommandPanelComponent.Listen(CommandPanel.ExpandRequestedEvent,
+            ToggleCommandPanelExpanded));
+        _componentSubscriptions.Add(page.CommandPanelComponent.Listen(CommandPanel.DraftChangedEvent,
+            OnCommandDraftChanged));
+
+        _componentSubscriptions.Add(page.WorkspaceCenterComponent.Listen(WorkspaceCenter.ToolSelectedEvent,
+            e => ActivateSessionTool(e.Detail)));
+        _componentSubscriptions.Add(page.WorkspaceCenterComponent.Listen(WorkspaceCenter.ToolSplitRequestedEvent,
+            OpenToolSplitMenu));
+        _componentSubscriptions.Add(page.WorkspaceCenterComponent.Listen(WorkspaceCenter.ToolSplitChangedEvent,
+            e =>
+            {
+                if (ActiveSession is not { } session) return;
+                session.SplitWidth = e.Detail;
+                ApplyToolSplitWidth(session.SplitWidth);
+            }));
+        _componentSubscriptions.Add(page.WorkspaceCenterComponent.Listen(WorkspaceCenter.ToolSplitCommittedEvent,
+            _ => SaveOpenSessions()));
+        _componentSubscriptions.Add(page.WorkspaceCenterComponent.Listen(WorkspaceCenter.CommandPanelRequestedEvent,
+            ToggleCommandPanelVisible));
+        _componentSubscriptions.Add(page.WorkspaceCenterComponent.Listen(WorkspaceCenter.CloseSplitRequestedEvent,
+            CloseToolSplit));
+
+        _componentSubscriptions.Add(page.SessionTabsComponent.Listen(SessionTabs.SessionSelectedEvent,
+            e => ActivateSession(e.Detail)));
+        _componentSubscriptions.Add(page.SessionTabsComponent.Listen(SessionTabs.SessionCloseRequestedEvent,
+            e => CloseRequestedSession(e.Detail)));
+
+        _componentSubscriptions.Add(page.SftpComponent.Listen(InspectorSidebar.BackRequestedEvent,
+            () => _ = NavigateSftpBackAsync()));
+        _componentSubscriptions.Add(page.SftpComponent.Listen(InspectorSidebar.ForwardRequestedEvent,
+            () => _ = NavigateSftpForwardAsync()));
+        _componentSubscriptions.Add(page.SftpComponent.Listen(InspectorSidebar.UpRequestedEvent,
+            () => _ = NavigateSftpUpAsync()));
+        _componentSubscriptions.Add(page.SftpComponent.Listen(InspectorSidebar.RefreshRequestedEvent,
+            () => _ = RefreshSftpAsync()));
+        _componentSubscriptions.Add(page.SftpComponent.Listen(InspectorSidebar.NewFolderRequestedEvent,
+            () => _ = CreateRemoteDirectoryAsync()));
+        _componentSubscriptions.Add(page.SftpComponent.Listen(InspectorSidebar.UploadRequestedEvent,
+            () => _ = UploadRemoteFileAsync()));
+        _componentSubscriptions.Add(page.SftpComponent.Listen(InspectorSidebar.MoreRequestedEvent,
+            OpenSelectedSftpMenu));
+        _componentSubscriptions.Add(page.SftpComponent.Listen(InspectorSidebar.PathSubmittedEvent,
+            e => _ = NavigateSftpAsync(e.Detail)));
+        _componentSubscriptions.Add(page.SftpComponent.Listen(InspectorSidebar.SelectionChangedEvent,
+            SelectSftpListItem));
+        _componentSubscriptions.Add(page.SftpComponent.Listen(InspectorSidebar.EntryActivatedEvent,
+            e => _ = OpenSftpEntryAsync(e.Detail)));
+        _componentSubscriptions.Add(page.SftpComponent.Listen(InspectorSidebar.ContextMenuRequestedEvent,
+            OpenSftpContextMenu));
+
+        _componentSubscriptions.Add(page.SessionInfoComponent.Listen(SessionInfoPanel.TrustOnceRequestedEvent,
+            () => _ = ConnectPendingAsync(HostKeyDecision.TrustOnce)));
+        _componentSubscriptions.Add(page.SessionInfoComponent.Listen(SessionInfoPanel.TrustStoreRequestedEvent,
+            () => _ = ConnectPendingAsync(HostKeyDecision.TrustAndStore)));
+    }
+
+    private void OpenToolSplitMenu(CustomEvent<ToolSplitRequest> e)
+    {
+        var menu = new ContextMenu();
+        menu.ClassList.Add("context-menu");
+        menu.Children.Add(MenuCommand("在右侧分屏打开", () => OpenToolSplit(e.Detail.Tool)));
+        OpenContextMenu(menu, e.Detail.Position);
     }
 
     private static void ConfigureSplitter(
@@ -381,7 +423,7 @@ internal sealed class AppController : IDisposable
         Button button,
         string glyph,
         string tooltip,
-        Action action,
+        Action? action,
         string? className = null)
     {
         button.TextContent = glyph;
@@ -390,7 +432,7 @@ internal sealed class AppController : IDisposable
         button.Style.Set("font-family", "'Segoe Fluent Icons', 'Segoe MDL2 Assets'");
         button.Style.Set("font-size", "16px");
         button.Tooltip = tooltip;
-        button.AddEventListener(StandardEvents.Click, action);
+        if (action is not null) button.AddEventListener(StandardEvents.Click, action);
     }
 
     private static void ConfigureFontIcon(FontIcon icon, string glyph, string color, float size)
@@ -403,19 +445,6 @@ internal sealed class AppController : IDisposable
         icon.Style.Set("height", size.ToString("0", CultureInfo.InvariantCulture) + "px");
     }
 
-    private void ConfigureSessionToolButton(Button button, SessionToolKind tool)
-    {
-        button.Tooltip = "左键切换；右键在右侧分屏打开";
-        button.AddEventListener(StandardEvents.Click, () => ActivateSessionTool(tool));
-        button.AddEventListener<PointerEvent>(StandardEvents.ContextMenu, e =>
-        {
-            var menu = new ContextMenu();
-            menu.ClassList.Add("context-menu");
-            menu.Children.Add(MenuCommand("在右侧分屏打开", () => OpenToolSplit(tool)));
-            OpenContextMenu(menu, new Point(e.ClientX, e.ClientY));
-            e.PreventDefault();
-        });
-    }
 
     private static void ConfigureStatusActionButton(Button button)
     {
@@ -542,15 +571,6 @@ internal sealed class AppController : IDisposable
             var item = new ConnectionProfileTreeItem(entry.WorkspaceId, entry.Profile, displayName);
             item.ClassList.Add("connection-item");
             item.Tooltip = $"{entry.Profile.Protocol.ToString().ToUpperInvariant()}  {entry.Profile.Username}@{entry.Profile.Host}:{entry.Profile.Port}";
-            item.AddEventListener(StandardEvents.Click, e =>
-            {
-                if (e.TimeStamp - item.LastClickTime <= 500)
-                {
-                    item.LastClickTime = 0;
-                    _ = OpenSessionAsync(item.Profile, displayName: item.TextContent, forceNew: true, workspaceId: item.WorkspaceId);
-                }
-                else item.LastClickTime = e.TimeStamp;
-            });
             _connectionItems[entry.WorkspaceId] = item;
             if (entry.Settings.FolderId is not null && _connectionFolders.TryGetValue(entry.Settings.FolderId, out var folder))
                 folder.Children.Add(item);
@@ -569,6 +589,15 @@ internal sealed class AppController : IDisposable
             "#c6d0df");
         if (ActiveSession is null) RenderActiveSession();
     }
+
+    private void OpenSelectedConnectionSession()
+    {
+        if (_connectionTree?.SelectedItem is not ConnectionProfileTreeItem item) return;
+        _ = OpenSessionAsync(item.Profile, displayName: item.TextContent, forceNew: true, workspaceId: item.WorkspaceId);
+    }
+
+    private void OpenConnectionContextMenu(CustomEvent<ConnectionContextMenuRequest> e) =>
+        OpenSelectedConnectionMenu(e.Detail.Position);
 
     private async Task CreateConnectionFolderAsync()
     {
@@ -669,14 +698,6 @@ internal sealed class AppController : IDisposable
         RebuildConnectionTree();
     }
 
-    private void OpenConnectionContextMenu(PointerEvent e)
-    {
-        if (_connectionTree is null) return;
-        if (FindAncestor<ConnectionProfileTreeItem>(e.Target as Element) is { } profile) _connectionTree.SelectItem(profile);
-        else if (FindAncestor<ConnectionFolderTreeItem>(e.Target as Element) is { } folder) _connectionTree.SelectItem(folder);
-        OpenSelectedConnectionMenu(new Point(e.ClientX, e.ClientY));
-        e.PreventDefault();
-    }
 
     private void OpenSelectedConnectionMenu() => OpenSelectedConnectionMenu(null);
 
@@ -779,9 +800,10 @@ internal sealed class AppController : IDisposable
         return null;
     }
 
-    private void SendCommands()
+    private void SendCommands() => SendCommands(_commandEditor?.Value);
+
+    private void SendCommands(string? text)
     {
-        var text = _commandEditor?.Value;
         if (string.IsNullOrWhiteSpace(text)) return;
         var session = ActiveSession;
         if (session?.Shell is null)
@@ -793,6 +815,11 @@ internal sealed class AppController : IDisposable
         var commands = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
         _ = WriteTerminalInputAsync(session, commands.Replace("\n", "\r", StringComparison.Ordinal) + "\r");
         UpdateSessionStatus(session, "已将命令发送到当前会话", "#7ee2ae");
+    }
+
+    private void OnCommandDraftChanged(CustomEvent<string> e)
+    {
+        if (ActiveSession is { } session) session.CommandDraft = e.Detail;
     }
 
     private void ToggleCommandPanelExpanded()
@@ -1165,11 +1192,13 @@ internal sealed class AppController : IDisposable
         var container = Panel("", "row", "auto", "38px");
         container.ClassList.Add("session-tab-container");
         container.Style.Set("gap", "0");
-        var tab = ActionButton(session.DisplayName, () => ActivateSession(session.Id), compact: true, className: "session-tab");
+        var tab = ActionButton(session.DisplayName,
+            () => _sessionTabsComponent?.RequestSessionSelected(session.Id), compact: true, className: "session-tab");
         tab.Style.Set("height", "38px");
         tab.Style.Set("min-width", "124px");
         tab.Style.Set("border-radius", "7px 0 0 0");
-        var close = ActionButton(FluentGlyphs.Cancel, () => _ = CloseSessionAsync(session), compact: true, className: "session-tab-close");
+        var close = ActionButton(FluentGlyphs.Cancel,
+            () => _sessionTabsComponent?.RequestSessionClose(session.Id), compact: true, className: "session-tab-close");
         close.Style.Set("width", "30px");
         close.Style.Set("height", "38px");
         close.Style.Set("padding", "0");
@@ -1180,6 +1209,7 @@ internal sealed class AppController : IDisposable
         _sessionTabsHost.Children.Add(container);
         session.TabContainer = container;
         session.TabButton = tab;
+        session.TabCloseButton = close;
         UpdateSessionTab(session);
     }
 
@@ -1197,6 +1227,11 @@ internal sealed class AppController : IDisposable
         RenderToolLayout(session);
         RenderActiveSession();
         if (!_restoringWorkspace) SaveOpenSessions();
+    }
+
+    private void CloseRequestedSession(Guid sessionId)
+    {
+        if (_sessions.TryGetValue(sessionId, out var session)) _ = CloseSessionAsync(session);
     }
 
     private void RenderToolLayout(WorkspaceSession session)
@@ -1296,7 +1331,7 @@ internal sealed class AppController : IDisposable
             $"已连接 {session.Profile.Username}@{session.Profile.Host}:{session.Profile.Port}  |  UTF-8  |  {session.Terminal.Columns}x{session.Terminal.Rows}",
         SessionToolKind.Terminal => session.StatusText,
         SessionToolKind.Sftp when session.State == SessionState.Connected =>
-            $"SFTP 已连接  |  {session.CurrentRemotePath}  |  当前无传输任务",
+            $"SFTP 已连接  |  {session.CurrentRemotePath}  |  {session.SftpEntries.Count} 个项目",
         SessionToolKind.Sftp => $"SFTP 未连接  |  {session.StatusText}",
         SessionToolKind.PortForwarding when session.State == SessionState.Connected =>
             "端口映射  |  当前无活动映射",
@@ -1380,6 +1415,7 @@ internal sealed class AppController : IDisposable
     private void RenderActiveSession()
     {
         var session = ActiveSession;
+        foreach (var item in _sessions.Values) UpdateSessionTab(item);
         var connected = session?.State == SessionState.Connected;
         var connecting = session?.State == SessionState.Connecting;
         if (_connectButton is not null)
@@ -1405,12 +1441,10 @@ internal sealed class AppController : IDisposable
             if (_bottomPanel is not null) _bottomPanel.IsVisible = false;
             if (_toolSplit is not null) _toolSplit.IsVisible = false;
             if (_secondaryToolHost is not null) _secondaryToolHost.IsVisible = false;
-            if (_sftpTree is not null)
-            {
-                _sftpTree.ClearSelection();
-                _sftpTree.Children.Clear();
-            }
-            if (_sftpPathText is not null) _sftpPathText.TextContent = "/";
+            _sftpFileList?.SetItemsSource<RemoteEntry>([]);
+            _boundSftpSessionId = null;
+            _boundSftpEntries = null;
+            if (_sftpPathInput is not null) _sftpPathInput.Value = "/";
             SetTrustButtons(false);
             ShowHistoryContext();
             return;
@@ -1432,7 +1466,7 @@ internal sealed class AppController : IDisposable
                 session.ActiveTool = SessionToolKind.SessionInfo;
         }
         else ShowHistoryContext();
-        RenderSftpTree(session);
+        RenderSftpList(session);
         RenderToolLayout(session);
         RenderActiveSessionControls(session);
     }
@@ -1445,6 +1479,10 @@ internal sealed class AppController : IDisposable
         _disconnectButton?.ClassList.Toggle("not-ready", !connected && !connecting);
         _refreshFilesButton?.ClassList.Toggle("not-ready", !connected);
         _sendButton?.ClassList.Toggle("not-ready", !connected);
+        if (_sftpPathInput is not null) _sftpPathInput.IsEnabled = connected;
+        if (_sftpBackButton is not null) _sftpBackButton.IsEnabled = connected && session.SftpNavigation.CanGoBack;
+        if (_sftpForwardButton is not null) _sftpForwardButton.IsEnabled = connected && session.SftpNavigation.CanGoForward;
+        if (_sftpUpButton is not null) _sftpUpButton.IsEnabled = connected && session.CurrentRemotePath != "/";
         if (_bottomPanel is not null)
             _bottomPanel.IsVisible = session.ActiveTool == SessionToolKind.Terminal && session.CommandPanelVisible;
         RenderProtocolTools(session);
@@ -1455,13 +1493,22 @@ internal sealed class AppController : IDisposable
         if (session.TabButton is null) return;
         session.TabButton.TextContent = session.DisplayName;
         var active = _activeSessionId == session.Id;
+        session.TabContainer?.ClassList.Toggle("active", active);
         session.TabButton.ClassList.Toggle("active", active);
         session.TabButton.ClassList.Toggle("connected", session.State == SessionState.Connected);
         session.TabButton.ClassList.Toggle("connecting", session.State == SessionState.Connecting);
         session.TabButton.ClassList.Toggle("failed", session.State == SessionState.Failed);
-        session.TabButton.Style.Set("background", active ? "#20324b" : "#182230");
-        session.TabButton.Style.Set("color", active ? "#ffffff" : "#dfe7f2");
+        session.TabButton.Style.Set("background", active ? "#172130" : "#0f151d");
+        session.TabButton.Style.Set("color", active ? "#e6edf6" : "#8290a3");
+        session.TabButton.Style.Set("font-weight", active ? "600" : "400");
+        session.TabButton.Style.Set("border", active ? "1px solid #3a5068" : "1px solid #253040");
         session.TabButton.Style.Set("border-bottom", active ? "2px solid #4f8cff" : "2px solid transparent");
+        if (session.TabCloseButton is { } close)
+        {
+            close.Style.Set("background", active ? "#172130" : "#0f151d");
+            close.Style.Set("color", active ? "#c6d0df" : "#68768a");
+            close.Style.Set("border-color", active ? "#3a5068" : "#253040");
+        }
         session.TabButton.Tooltip = session.StatusText;
     }
 
@@ -1472,87 +1519,198 @@ internal sealed class AppController : IDisposable
         var profile = session?.Profile ?? _selectedProfile;
         if (profile is null) return;
         if ((profile.Capabilities & ConnectionCapabilities.FileBrowser) != 0)
-            _protocolToolsHost.Children.Add(IconButton(FluentGlyphs.Folder, "打开 SFTP 文件", () =>
-            {
-                if (session is not null) ActivateSessionTool(SessionToolKind.Sftp);
-            }));
+            _protocolToolsHost.Children.Add(IconButton(FluentGlyphs.Folder, "打开 SFTP 文件",
+                () => _terminalToolbarComponent?.RequestProtocolAction("sftp")));
         if (profile.Protocol == ConnectionProtocol.Rdp ||
             (profile.Capabilities & ConnectionCapabilities.RemoteDesktop) != 0 && profile.Port == 3389)
-            _protocolToolsHost.Children.Add(IconButton(FluentGlyphs.Desktop, "启动 RDP", LaunchRdp));
+            _protocolToolsHost.Children.Add(IconButton(FluentGlyphs.Desktop, "启动 RDP",
+                () => _terminalToolbarComponent?.RequestProtocolAction("rdp")));
         if (profile.Protocol == ConnectionProtocol.Vnc)
-            _protocolToolsHost.Children.Add(IconButton(FluentGlyphs.Screen, "检测 VNC", () => _ = ProbeVncAsync()));
+            _protocolToolsHost.Children.Add(IconButton(FluentGlyphs.Screen, "检测 VNC",
+                () => _terminalToolbarComponent?.RequestProtocolAction("vnc")));
+    }
+
+    private void HandleProtocolAction(CustomEvent<string> e)
+    {
+        switch (e.Detail)
+        {
+            case "sftp" when ActiveSession is not null:
+                ActivateSessionTool(SessionToolKind.Sftp);
+                break;
+            case "rdp":
+                LaunchRdp();
+                break;
+            case "vnc":
+                _ = ProbeVncAsync();
+                break;
+        }
     }
 
     private Task RefreshSftpAsync() => ActiveSession is { } session
         ? RefreshSftpAsync(session)
         : Task.CompletedTask;
 
-    private async Task RefreshSftpAsync(WorkspaceSession workspaceSession)
+    private Task RefreshSftpAsync(WorkspaceSession workspaceSession) =>
+        LoadSftpDirectoryAsync(workspaceSession, workspaceSession.CurrentRemotePath);
+
+    private Task NavigateSftpAsync(string path) => ActiveSession is { } session
+        ? NavigateSftpAsync(session, path)
+        : Task.CompletedTask;
+
+    private async Task NavigateSftpAsync(WorkspaceSession workspaceSession, string path)
     {
-        if (workspaceSession.Transport is null)
+        if (ActiveSession?.Id != workspaceSession.Id) return;
+        if (!PathRootPolicy.TryCanonicalizePosixPath(path, out var canonicalPath))
+        {
+            UpdateSessionStatus(workspaceSession, "远程路径必须是有效的绝对路径。", "#f6c66b");
+            if (_sftpPathInput is not null) _sftpPathInput.Value = workspaceSession.CurrentRemotePath;
+            return;
+        }
+        if (canonicalPath == workspaceSession.CurrentRemotePath)
+        {
+            await RefreshSftpAsync(workspaceSession).ConfigureAwait(false);
+            return;
+        }
+        await LoadSftpDirectoryAsync(
+            workspaceSession,
+            canonicalPath,
+            () => workspaceSession.SftpNavigation.NavigateTo(canonicalPath)).ConfigureAwait(false);
+    }
+
+    private async Task NavigateSftpBackAsync()
+    {
+        if (ActiveSession is not { } session || session.SftpNavigation.BackPath is not { } path) return;
+        await LoadSftpDirectoryAsync(session, path, session.SftpNavigation.GoBack).ConfigureAwait(false);
+    }
+
+    private async Task NavigateSftpForwardAsync()
+    {
+        if (ActiveSession is not { } session || session.SftpNavigation.ForwardPath is not { } path) return;
+        await LoadSftpDirectoryAsync(session, path, session.SftpNavigation.GoForward).ConfigureAwait(false);
+    }
+
+    private async Task NavigateSftpUpAsync()
+    {
+        if (ActiveSession is not { } session || session.SftpNavigation.ParentPath is not { } path) return;
+        await LoadSftpDirectoryAsync(session, path, session.SftpNavigation.GoUp).ConfigureAwait(false);
+    }
+
+    private async Task LoadSftpDirectoryAsync(
+        WorkspaceSession workspaceSession,
+        string path,
+        Func<bool>? commitNavigation = null)
+    {
+        if (workspaceSession.Transport is not { } transport)
         {
             UpdateSessionStatus(workspaceSession, "请先建立 SSH 连接。", "#f6c66b");
             return;
         }
+        if (!PathRootPolicy.TryCanonicalizePosixPath(path, out var canonicalPath)) return;
         var requestVersion = ++workspaceSession.SftpRequestVersion;
-        workspaceSession.CurrentRemotePath = "/";
-        workspaceSession.SelectedRemoteEntry = null;
-        SftpTreeItem? root = null;
-        await InvokeUiAsync(() =>
+        try
         {
-            root = CreateSftpItem(workspaceSession, null, "/", "/");
-            workspaceSession.SftpRoot = root;
-            RenderSftpTree(workspaceSession);
-        }).ConfigureAwait(false);
-        if (root is null) return;
-        await EnsureSftpChildrenAsync(root, requestVersion).ConfigureAwait(false);
-        await InvokeUiAsync(() => root.Expand()).ConfigureAwait(false);
+            var entries = await transport.ListAsync(
+                canonicalPath,
+                workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+            if (workspaceSession.SftpRequestVersion != requestVersion) return;
+            var sorted = entries
+                .OrderByDescending(entry => entry.Kind == RemoteEntryKind.Directory)
+                .ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            await InvokeUiAsync(() =>
+            {
+                if (workspaceSession.SftpRequestVersion != requestVersion) return;
+                if (commitNavigation is not null && !commitNavigation()) return;
+                workspaceSession.SftpEntries = sorted;
+                workspaceSession.SelectedRemoteEntry = null;
+                if (_activeSessionId != workspaceSession.Id) return;
+                RenderSftpList(workspaceSession);
+                if (commitNavigation is not null) _sftpFileList?.ScrollToTop();
+                RenderActiveSessionControls(workspaceSession);
+                SetText(_sessionStatus, BuildToolStatus(workspaceSession), workspaceSession.StatusColor);
+            }).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            if (workspaceSession.SftpRequestVersion != requestVersion) return;
+            UpdateSessionStatus(workspaceSession, $"SFTP: {SafeError(exception)}", "#fda4af");
+        }
     }
 
-    private bool TryGetActiveSftpSession(SftpTreeItem item, out WorkspaceSession workspaceSession)
+    private void RenderSftpList(WorkspaceSession workspaceSession)
     {
-        if (SessionItemScope.Matches(_activeSessionId, item.SessionId) &&
-            _sessions.TryGetValue(item.SessionId, out var session) &&
-            ReferenceEquals(ActiveSession, session))
+        if (_activeSessionId != workspaceSession.Id || _sftpFileList is null) return;
+        IReadOnlyList<RemoteEntry> entries = workspaceSession.State == SessionState.Connected
+            ? workspaceSession.SftpEntries
+            : [];
+        if (_boundSftpSessionId != workspaceSession.Id || !ReferenceEquals(_boundSftpEntries, entries))
         {
-            workspaceSession = session;
-            return true;
+            _sftpFileList.SetItemsSource(entries,
+                (entry, index) => CreateSftpListItem(workspaceSession, entry, index));
+            _boundSftpSessionId = workspaceSession.Id;
+            _boundSftpEntries = entries;
         }
-        workspaceSession = null!;
-        return false;
+        if (_sftpPathInput is not null) _sftpPathInput.Value = workspaceSession.CurrentRemotePath;
     }
 
-    private void RenderSftpTree(WorkspaceSession workspaceSession)
+    private static SftpListItem CreateSftpListItem(WorkspaceSession workspaceSession, RemoteEntry entry, int index)
     {
-        if (_activeSessionId != workspaceSession.Id || _sftpTree is null) return;
-        var root = workspaceSession.State == SessionState.Connected ? workspaceSession.SftpRoot : null;
-        if (!ReferenceEquals(root?.ParentNode, _sftpTree) || root is null && _sftpTree.Children.Count > 0)
-        {
-            _sftpTree.ClearSelection();
-            _sftpTree.Children.Clear();
-            if (root is not null) _sftpTree.Children.Add(root);
-        }
-        if (_sftpPathText is not null)
-            _sftpPathText.TextContent = root is null ? "/" : workspaceSession.CurrentRemotePath;
-    }
+        var item = new SftpListItem(workspaceSession.Id, entry, index) { Marker = "" };
+        item.ClassList.Add("sftp-list-item");
+        item.Style.Set("display", "flex");
+        item.Style.Set("flex-direction", "row");
+        item.Style.Set("align-items", "center");
+        item.Style.Set("width", "100%");
+        item.Style.Set("padding", "0 6px");
+        item.Style.Set("gap", "8px");
+        item.Tooltip = entry.FullPath;
 
-    private static SftpTreeItem CreateSftpItem(WorkspaceSession workspaceSession, RemoteEntry? entry, string path, string label)
-    {
-        var item = new SftpTreeItem(workspaceSession.Id, entry, path, label);
-        item.ClassList.Add(entry is null || entry.Kind == RemoteEntryKind.Directory ? "sftp-directory" : "sftp-file");
-        var (icon, color) = ResolveSftpIcon(entry);
-        item.LeadingIcon = icon;
-        item.LeadingIconFontFamily = "Segoe Fluent Icons";
-        item.LeadingIconColor = color;
-        if (item.IsDirectory)
+        var (glyph, color) = ResolveSftpIcon(entry);
+        var icon = new FontIcon
         {
-            var placeholder = new TreeItem("正在加载...") { IsEnabled = false };
-            placeholder.ClassList.Add("tree-placeholder");
-            item.Placeholder = placeholder;
-            item.Children.Add(placeholder);
-        }
-        item.Tooltip = path;
+            Glyph = glyph,
+            FontFamily = "Segoe Fluent Icons",
+            FontSize = 15
+        };
+        icon.Style.Set("width", "18px");
+        icon.Style.Set("height", "18px");
+        icon.Style.Set("flex-shrink", "0");
+        icon.Style.Set("color", $"#{color.R:X2}{color.G:X2}{color.B:X2}");
+
+        var name = new Text(entry.Name);
+        name.Style.Set("flex", "1");
+        name.Style.Set("min-width", "100px");
+        name.Style.Set("color", "#d7e5f9");
+        name.Style.Set("font-size", "13px");
+        name.Style.Set("white-space", "nowrap");
+
+        var size = new Text(FormatRemoteLength(entry));
+        size.Style.Set("width", "64px");
+        size.Style.Set("flex-shrink", "0");
+        size.Style.Set("color", "#8d9aae");
+        size.Style.Set("font-size", "11px");
+
+        var modified = new Text(entry.LastWriteTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture));
+        modified.Style.Set("width", "112px");
+        modified.Style.Set("flex-shrink", "0");
+        modified.Style.Set("color", "#8d9aae");
+        modified.Style.Set("font-size", "11px");
+
+        item.Children.Add(icon);
+        item.Children.Add(name);
+        item.Children.Add(size);
+        item.Children.Add(modified);
         return item;
+    }
+
+    private static string FormatRemoteLength(RemoteEntry entry)
+    {
+        if (entry.Kind == RemoteEntryKind.Directory) return "";
+        var length = Math.Max(0, entry.Length);
+        if (length < 1024) return $"{length} B";
+        if (length < 1024L * 1024) return $"{length / 1024d:0.#} KB";
+        if (length < 1024L * 1024 * 1024) return $"{length / (1024d * 1024):0.#} MB";
+        return $"{length / (1024d * 1024 * 1024):0.#} GB";
     }
 
     private static (string Glyph, Color Color) ResolveSftpIcon(RemoteEntry? entry)
@@ -1579,117 +1737,72 @@ internal sealed class AppController : IDisposable
         return (FluentGlyphs.File, Color.FromRgb(177, 190, 207));
     }
 
-    private Task EnsureSftpChildrenAsync(SftpTreeItem item) => EnsureSftpChildrenAsync(item, null);
-
-    private async Task EnsureSftpChildrenAsync(SftpTreeItem item, long? expectedRequestVersion)
+    private void SelectSftpListItem(CustomEvent<RemoteEntry> e)
     {
-        if (item.ChildrenLoaded || item.IsLoading || !item.IsDirectory ||
-            !TryGetActiveSftpSession(item, out var workspaceSession) || workspaceSession.Transport is not { } transport)
-            return;
-        item.IsLoading = true;
-        var requestVersion = expectedRequestVersion ?? workspaceSession.SftpRequestVersion;
-        try
-        {
-            var entries = await transport.ListAsync(item.Path, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
-            if (workspaceSession.SftpRequestVersion != requestVersion)
-            {
-                item.IsLoading = false;
-                return;
-            }
-            await InvokeUiAsync(() =>
-            {
-                if (!SessionItemScope.Matches(_activeSessionId, item.SessionId) ||
-                    workspaceSession.SftpRequestVersion != requestVersion)
-                {
-                    item.IsLoading = false;
-                    return;
-                }
-                foreach (var entry in entries
-                             .OrderByDescending(entry => entry.Kind == RemoteEntryKind.Directory)
-                             .ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase))
-                {
-                    var label = entry.Kind == RemoteEntryKind.Directory ? entry.Name + "/" : entry.Name;
-                    item.Children.Add(CreateSftpItem(workspaceSession, entry, entry.FullPath, label));
-                }
-                if (item.Placeholder is not null) item.Children.Remove(item.Placeholder);
-                item.Placeholder = null;
-                item.ChildrenLoaded = true;
-                item.IsLoading = false;
-            }).ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            item.IsLoading = false;
-            UpdateSessionStatus(workspaceSession, $"SFTP: {SafeError(exception)}", "#fda4af");
-        }
+        if (ActiveSession is { } session && _boundSftpSessionId == session.Id &&
+            session.SftpEntries.Contains(e.Detail))
+            session.SelectedRemoteEntry = e.Detail;
     }
 
-    private void SelectSftpTreeItem()
-    {
-        if (_sftpTree?.SelectedItem is not SftpTreeItem item || !TryGetActiveSftpSession(item, out var workspaceSession)) return;
-        workspaceSession.SelectedRemoteEntry = item.Entry;
-        workspaceSession.CurrentRemotePath = item.IsDirectory ? item.Path : RemoteParent(item.Path);
-        if (_sftpPathText is not null) _sftpPathText.TextContent = workspaceSession.CurrentRemotePath;
-    }
+    private Task OpenSftpEntryAsync(RemoteEntry entry) => ActiveSession is { } session
+        ? OpenSftpEntryAsync(session, entry)
+        : Task.CompletedTask;
 
-    private void OpenSftpContextMenu(PointerEvent e)
+    private Task OpenSftpEntryAsync(WorkspaceSession workspaceSession, RemoteEntry entry) =>
+        ActiveSession?.Id == workspaceSession.Id && entry.Kind == RemoteEntryKind.Directory
+            ? NavigateSftpAsync(workspaceSession, entry.FullPath)
+            : Task.CompletedTask;
+
+    private void OpenSftpContextMenu(CustomEvent<SftpContextMenuRequest> e)
     {
-        if (_sftpTree is null) return;
-        if (FindAncestor<SftpTreeItem>(e.Target as Element) is not { } item ||
-            !SessionItemScope.Matches(_activeSessionId, item.SessionId)) return;
-        _sftpTree.SelectItem(item);
-        OpenSelectedSftpMenu(new Point(e.ClientX, e.ClientY));
-        e.PreventDefault();
+        if (ActiveSession is not { } workspaceSession ||
+            _boundSftpSessionId != workspaceSession.Id ||
+            !workspaceSession.SftpEntries.Contains(e.Detail.Entry)) return;
+        workspaceSession.SelectedRemoteEntry = e.Detail.Entry;
+        OpenSelectedSftpMenu(e.Detail.Position);
     }
 
     private void OpenSelectedSftpMenu() => OpenSelectedSftpMenu(null);
 
     private void OpenSelectedSftpMenu(Point? position)
     {
-        if (_sftpTree?.SelectedItem is not SftpTreeItem item || !TryGetActiveSftpSession(item, out var workspaceSession)) return;
+        if (_sftpFileList is null || ActiveSession is not { } workspaceSession ||
+            _boundSftpSessionId != workspaceSession.Id ||
+            SftpSelection.GetSelectedEntry(_sftpFileList) is not { } entry) return;
+        Element anchor = _sftpFileList.SelectedItem ?? (Element?)_sftpMoreButton ?? _sftpFileList;
+        var isDirectory = entry.Kind == RemoteEntryKind.Directory;
         var menu = new ContextMenu();
         menu.ClassList.Add("context-menu");
-        if (item.IsDirectory)
+        if (isDirectory)
         {
-            menu.Children.Add(MenuCommand("刷新目录", () => _ = ReloadSftpDirectoryAsync(item)));
-            menu.Children.Add(MenuCommand("新建文件夹", () => _ = CreateRemoteDirectoryAsync(item.Path)));
-            menu.Children.Add(MenuCommand("上传文件到这里", () => _ = UploadRemoteFileAsync(item.Path)));
-            menu.Children.Add(MenuCommand("粘贴", () => _ = PasteRemoteItemAsync(item.Path)));
+            menu.Children.Add(MenuCommand("打开", () => _ = OpenSftpEntryAsync(workspaceSession, entry)));
+            menu.Children.Add(MenuCommand("新建文件夹", () => _ = CreateRemoteDirectoryAsync(workspaceSession, entry.FullPath)));
+            menu.Children.Add(MenuCommand("上传文件到这里", () => _ = UploadRemoteFileAsync(workspaceSession, entry.FullPath)));
+            menu.Children.Add(MenuCommand("粘贴", () => _ = PasteRemoteItemAsync(workspaceSession, entry.FullPath)));
             menu.Children.Add(new MenuSeparator());
         }
-        if (item.Entry is not null)
-        {
-            if (!item.IsDirectory) menu.Children.Add(MenuCommand("下载到本地", () => _ = DownloadRemoteFileAsync(item)));
-            menu.Children.Add(MenuCommand("重命名 / 移动", () => _ = RenameRemoteItemAsync(item)));
-            menu.Children.Add(MenuCommand("复制", () => CopyRemoteItem(workspaceSession, item, cut: false)));
-            menu.Children.Add(MenuCommand("剪切", () => CopyRemoteItem(workspaceSession, item, cut: true)));
-            menu.Children.Add(MenuCommand("删除", () => _ = DeleteRemoteItemAsync(item)));
-            menu.Children.Add(new MenuSeparator());
-        }
-        menu.Children.Add(MenuCommand("复制路径", () => _ = CopyRemotePathAsync(item.Path)));
-        menu.Children.Add(MenuCommand("发送路径到终端", () => _ = WriteTerminalInputAsync(workspaceSession, QuoteShellPath(item.Path))));
-        OpenContextMenu(menu, position ?? MenuPointFor(item));
+        if (!isDirectory) menu.Children.Add(MenuCommand("下载到本地", () => _ = DownloadRemoteFileAsync(workspaceSession, entry)));
+        menu.Children.Add(MenuCommand("重命名 / 移动", () => _ = RenameRemoteItemAsync(workspaceSession, entry)));
+        menu.Children.Add(MenuCommand("复制", () => CopyRemoteItem(workspaceSession, entry, cut: false)));
+        menu.Children.Add(MenuCommand("剪切", () => CopyRemoteItem(workspaceSession, entry, cut: true)));
+        menu.Children.Add(MenuCommand("删除", () => _ = DeleteRemoteItemAsync(workspaceSession, entry)));
+        menu.Children.Add(new MenuSeparator());
+        menu.Children.Add(MenuCommand("复制路径", () => _ = CopyRemotePathAsync(entry.FullPath)));
+        menu.Children.Add(MenuCommand("发送路径到终端", () => _ = WriteTerminalInputAsync(workspaceSession, QuoteShellPath(entry.FullPath))));
+        OpenContextMenu(menu, position ?? MenuPointFor(anchor));
     }
 
-    private async Task ReloadSftpDirectoryAsync(SftpTreeItem item)
-    {
-        if (!SessionItemScope.Matches(_activeSessionId, item.SessionId)) return;
-        item.ChildrenLoaded = false;
-        item.Children.Clear();
-        item.Placeholder = new TreeItem("正在加载...") { IsEnabled = false };
-        item.Children.Add(item.Placeholder);
-        await EnsureSftpChildrenAsync(item).ConfigureAwait(false);
-        await InvokeUiAsync(() => item.Expand()).ConfigureAwait(false);
-    }
+    private Task CreateRemoteDirectoryAsync() => ActiveSession is { } session
+        ? CreateRemoteDirectoryAsync(session, session.CurrentRemotePath)
+        : Task.CompletedTask;
 
-    private Task CreateRemoteDirectoryAsync() => CreateRemoteDirectoryAsync(GetRemoteTargetDirectory(ActiveSession));
-
-    private async Task CreateRemoteDirectoryAsync(string? directory)
+    private async Task CreateRemoteDirectoryAsync(WorkspaceSession workspaceSession, string? directory)
     {
-        var workspaceSession = ActiveSession;
-        if (_root is null || workspaceSession?.Transport is not { } transport || directory is null) return;
+        if (_root is null || ActiveSession?.Id != workspaceSession.Id ||
+            workspaceSession.Transport is not { } transport || directory is null) return;
         var name = await WorkspaceDialogs.PromptAsync(_root, "新建远程目录", placeholder: "目录名称");
-        if (!IsValidRemoteName(name)) return;
+        if (!IsValidRemoteName(name) || ActiveSession?.Id != workspaceSession.Id ||
+            !ReferenceEquals(workspaceSession.Transport, transport)) return;
         try
         {
             await transport.CreateDirectoryAsync(RemoteChild(directory, name!), workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
@@ -1701,13 +1814,16 @@ internal sealed class AppController : IDisposable
         }
     }
 
-    private Task UploadRemoteFileAsync() => UploadRemoteFileAsync(GetRemoteTargetDirectory(ActiveSession));
+    private Task UploadRemoteFileAsync() => ActiveSession is { } session
+        ? UploadRemoteFileAsync(session, session.CurrentRemotePath)
+        : Task.CompletedTask;
 
-    private async Task UploadRemoteFileAsync(string? directory)
+    private async Task UploadRemoteFileAsync(WorkspaceSession workspaceSession, string? directory)
     {
-        var workspaceSession = ActiveSession;
-        if (_root is null || workspaceSession?.Transport is not { } transport || directory is null) return;
+        if (_root is null || ActiveSession?.Id != workspaceSession.Id ||
+            workspaceSession.Transport is not { } transport || directory is null) return;
         var localPath = await WorkspaceDialogs.PromptAsync(_root, "上传本地文件", placeholder: "本地文件完整路径");
+        if (ActiveSession?.Id != workspaceSession.Id || !ReferenceEquals(workspaceSession.Transport, transport)) return;
         if (string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath))
         {
             UpdateSessionStatus(workspaceSession, "本地文件不存在。", "#f6c66b");
@@ -1726,20 +1842,21 @@ internal sealed class AppController : IDisposable
         }
     }
 
-    private async Task DownloadRemoteFileAsync(SftpTreeItem item)
+    private async Task DownloadRemoteFileAsync(WorkspaceSession workspaceSession, RemoteEntry entry)
     {
-        if (_root is null || !TryGetActiveSftpSession(item, out var workspaceSession) ||
-            workspaceSession.Transport is not { } transport || item.Entry is null) return;
-        var defaultPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", item.Entry.Name);
+        if (_root is null || ActiveSession?.Id != workspaceSession.Id ||
+            workspaceSession.Transport is not { } transport) return;
+        var defaultPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", entry.Name);
         var localPath = await WorkspaceDialogs.PromptAsync(_root, "下载远程文件", defaultPath, "本地保存完整路径");
-        if (string.IsNullOrWhiteSpace(localPath)) return;
+        if (string.IsNullOrWhiteSpace(localPath) || ActiveSession?.Id != workspaceSession.Id ||
+            !ReferenceEquals(workspaceSession.Transport, transport)) return;
         var temporaryPath = localPath + ".termsquared-part";
         try
         {
             var directory = Path.GetDirectoryName(localPath);
             if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
             await using (var destination = File.Create(temporaryPath))
-                await transport.DownloadAsync(item.Path, destination, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+                await transport.DownloadAsync(entry.FullPath, destination, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
             File.Move(temporaryPath, localPath, overwrite: true);
             UpdateSessionStatus(workspaceSession, $"已下载到 {localPath}", "#7ee2ae");
         }
@@ -1750,15 +1867,17 @@ internal sealed class AppController : IDisposable
         }
     }
 
-    private async Task RenameRemoteItemAsync(SftpTreeItem item)
+    private async Task RenameRemoteItemAsync(WorkspaceSession workspaceSession, RemoteEntry entry)
     {
-        if (_root is null || item.Entry is null || !TryGetActiveSftpSession(item, out var workspaceSession) ||
+        if (_root is null || ActiveSession?.Id != workspaceSession.Id ||
             workspaceSession.Transport is not { } transport) return;
-        var destination = await WorkspaceDialogs.PromptAsync(_root, "重命名或移动", item.Path, "远程完整路径");
-        if (string.IsNullOrWhiteSpace(destination) || destination == item.Path || !destination.StartsWith('/')) return;
+        var destination = await WorkspaceDialogs.PromptAsync(_root, "重命名或移动", entry.FullPath, "远程完整路径");
+        if (!PathRootPolicy.TryCanonicalizePosixPath(destination ?? "", out var canonicalDestination) ||
+            canonicalDestination == entry.FullPath ||
+            ActiveSession?.Id != workspaceSession.Id || !ReferenceEquals(workspaceSession.Transport, transport)) return;
         try
         {
-            await transport.RenameAsync(item.Path, destination, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+            await transport.RenameAsync(entry.FullPath, canonicalDestination, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
             await RefreshSftpAsync(workspaceSession).ConfigureAwait(false);
         }
         catch (Exception exception)
@@ -1767,19 +1886,24 @@ internal sealed class AppController : IDisposable
         }
     }
 
-    private void CopyRemoteItem(WorkspaceSession workspaceSession, SftpTreeItem item, bool cut)
+    private void CopyRemoteItem(WorkspaceSession workspaceSession, RemoteEntry entry, bool cut)
     {
-        if (item.Entry is null || !SessionItemScope.Matches(_activeSessionId, item.SessionId) ||
-            workspaceSession.Id != item.SessionId) return;
-        _remoteClipboard = new RemoteClipboardItem(workspaceSession.Id, item.Path, item.Entry.Name, item.IsDirectory, cut);
+        if (ActiveSession?.Id != workspaceSession.Id) return;
+        _remoteClipboard = new RemoteClipboardItem(
+            workspaceSession.Id,
+            entry.FullPath,
+            entry.Name,
+            entry.Kind == RemoteEntryKind.Directory,
+            cut);
         UpdateSessionStatus(workspaceSession, cut ? "已剪切远程项目，选择目标目录后粘贴。" : "已复制远程项目，选择目标目录后粘贴。", "#8fb6ff");
     }
 
-    private async Task PasteRemoteItemAsync(string destinationDirectory)
+    private async Task PasteRemoteItemAsync(WorkspaceSession expectedSession, string destinationDirectory)
     {
         var clipboard = _remoteClipboard;
         if (clipboard is null || !_sessions.TryGetValue(clipboard.SessionId, out var workspaceSession) ||
-            workspaceSession.Transport is not { } transport || ActiveSession?.Id != clipboard.SessionId) return;
+            !ReferenceEquals(workspaceSession, expectedSession) || workspaceSession.Transport is not { } transport ||
+            ActiveSession?.Id != expectedSession.Id) return;
         var destination = RemoteChild(destinationDirectory, clipboard.Name);
         if (destination == clipboard.Path || destination.StartsWith(clipboard.Path.TrimEnd('/') + '/', StringComparison.Ordinal))
         {
@@ -1825,17 +1949,18 @@ internal sealed class AppController : IDisposable
         }
     }
 
-    private async Task DeleteRemoteItemAsync(SftpTreeItem item)
+    private async Task DeleteRemoteItemAsync(WorkspaceSession workspaceSession, RemoteEntry entry)
     {
-        if (_root is null || item.Entry is null || !TryGetActiveSftpSession(item, out var workspaceSession) ||
+        if (_root is null || ActiveSession?.Id != workspaceSession.Id ||
             workspaceSession.Transport is not { } transport ||
-            !await WorkspaceDialogs.ConfirmAsync(_root, "删除远程项目", $"永久删除 {item.Path}？\n目录将递归删除，此操作无法撤销。")) return;
+            !await WorkspaceDialogs.ConfirmAsync(_root, "删除远程项目", $"永久删除 {entry.FullPath}？\n目录将递归删除，此操作无法撤销。")) return;
+        if (ActiveSession?.Id != workspaceSession.Id || !ReferenceEquals(workspaceSession.Transport, transport)) return;
         try
         {
-            if (item.IsDirectory)
-                await DeleteRemoteDirectoryAsync(transport, item.Path, 0, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+            if (entry.Kind == RemoteEntryKind.Directory)
+                await DeleteRemoteDirectoryAsync(transport, entry.FullPath, 0, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
             else
-                await transport.RemoveFileAsync(item.Path, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
+                await transport.RemoveFileAsync(entry.FullPath, workspaceSession.ConnectionLifetime?.Token ?? _lifetime.Token).ConfigureAwait(false);
             await RefreshSftpAsync(workspaceSession).ConfigureAwait(false);
         }
         catch (Exception exception)
@@ -1866,23 +1991,10 @@ internal sealed class AppController : IDisposable
         if (_window is not null) await _window.SetClipboardTextAsync(path).ConfigureAwait(false);
     }
 
-    private static string? GetRemoteTargetDirectory(WorkspaceSession? workspaceSession)
-    {
-        if (workspaceSession is null) return null;
-        return workspaceSession.SelectedRemoteEntry is { Kind: RemoteEntryKind.Directory } directory
-            ? directory.FullPath
-            : workspaceSession.CurrentRemotePath;
-    }
 
     private static string RemoteChild(string parent, string name) =>
         parent == "/" ? "/" + name : parent.TrimEnd('/') + "/" + name;
 
-    private static string RemoteParent(string path)
-    {
-        var normalized = path.TrimEnd('/');
-        var index = normalized.LastIndexOf('/');
-        return index <= 0 ? "/" : normalized[..index];
-    }
 
     private static bool IsValidRemoteName(string? name) =>
         !string.IsNullOrWhiteSpace(name) && name is not "." and not ".." && !name.Contains('/');
@@ -1960,6 +2072,9 @@ internal sealed class AppController : IDisposable
         var reader = workspaceSession.ReaderTask;
         var hadSession = shell is not null || transport is not null;
         workspaceSession.Generation++;
+        workspaceSession.SftpRequestVersion++;
+        workspaceSession.SftpEntries = [];
+        workspaceSession.SelectedRemoteEntry = null;
         workspaceSession.Shell = null;
         workspaceSession.Transport = null;
         workspaceSession.ReaderTask = Task.CompletedTask;
@@ -2203,6 +2318,8 @@ internal sealed class AppController : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        foreach (var subscription in _componentSubscriptions) subscription.Dispose();
+        _componentSubscriptions.Clear();
         _lifetime.Cancel();
         foreach (var session in _sessions.Values.ToArray())
         {

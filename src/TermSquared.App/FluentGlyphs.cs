@@ -12,6 +12,9 @@ internal static class FluentGlyphs
     public const string Search = "\uE721";
     public const string Send = "\uE724";
     public const string Refresh = "\uE72C";
+    public const string Back = "\uE72B";
+    public const string Forward = "\uE72A";
+    public const string Up = "\uE74A";
     public const string Lock = "\uE72E";
     public const string CheckMark = "\uE73E";
     public const string Delete = "\uE74D";

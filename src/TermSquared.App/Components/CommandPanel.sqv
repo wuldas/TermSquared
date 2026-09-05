@@ -3,17 +3,43 @@
     <View class="command-panel-header">
       <FontIcon ref="PanelIcon" class="fluent-icon" font-family="Segoe Fluent Icons" glyph="" />
       <Text class="command-panel-title" text="命令编辑与发送" />
-      <Button ref="SendButton" class="icon-button icon-button-primary" text="" />
-      <Button ref="ClearCommandsButton" class="icon-button" text="" />
-      <Button ref="ExpandCommandsButton" class="icon-button" text="" />
+      <Button ref="SendButton" class="icon-button icon-button-primary" text="" @click="OnSend" />
+      <Button ref="ClearCommandsButton" class="icon-button" text="" @click="OnClear" />
+      <Button ref="ExpandCommandsButton" class="icon-button" text="" @click="OnExpand" />
     </View>
     <View ref="CommandPanelBody" class="command-panel-body">
-      <CodeEditor ref="CommandEditor" class="command-editor" />
+      <CodeEditor ref="CommandEditor" class="command-editor" @input="OnDraftChanged" @keydown="OnEditorKeyDown" />
     </View>
   </View>
 </template>
 <script lang="csharp" namespace="TermSquared.App.Components" name="CommandPanel" access="internal">
 using Square.Extensions.CodeEditor;
+
+public static readonly ComponentEvent<string> SendRequestedEvent = new("send-requested");
+public static readonly ComponentEvent ClearRequestedEvent = new("clear-requested");
+public static readonly ComponentEvent ExpandRequestedEvent = new("expand-requested");
+public static readonly ComponentEvent<string> DraftChangedEvent = new("draft-changed");
+
+private void OnSend()
+{
+    if (!string.IsNullOrWhiteSpace(CommandEditor.Value)) Emit(SendRequestedEvent, CommandEditor.Value);
+}
+
+private void OnClear()
+{
+    CommandEditor.Value = "";
+    Emit(ClearRequestedEvent);
+}
+
+private void OnExpand() => Emit(ExpandRequestedEvent);
+private void OnDraftChanged() => Emit(DraftChangedEvent, CommandEditor.Value);
+
+private void OnEditorKeyDown(Event e)
+{
+    if (e is not KeyboardEvent keyboard || keyboard.KeyCode != 13 || !keyboard.ControlKey) return;
+    e.PreventDefault();
+    OnSend();
+}
 </script>
 <style>
   .bottom-panel { display: flex; flex-direction: column; width: 100%; height: auto; gap: 0; }

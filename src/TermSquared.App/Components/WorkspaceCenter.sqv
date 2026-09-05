@@ -2,10 +2,10 @@
   <View ref="Root" class="workspace-center">
     <SessionTabs ref="SessionTabs" style="width: 100%; height: 42px;" />
     <View ref="SessionToolTabsRoot" class="session-tool-tabs">
-      <Button ref="TerminalToolButton" class="session-tool-tab" text="终端" />
-      <Button ref="SftpToolButton" class="session-tool-tab" text="SFTP 文件" />
-      <Button ref="PortForwardingToolButton" class="session-tool-tab" text="映射端口" />
-      <Button ref="SessionInfoToolButton" class="session-tool-tab" text="会话" />
+      <Button ref="TerminalToolButton" class="session-tool-tab" text="终端" @click="OnTerminalSelected" @contextmenu="OnTerminalContextMenu" />
+      <Button ref="SftpToolButton" class="session-tool-tab" text="SFTP 文件" @click="OnSftpSelected" @contextmenu="OnSftpContextMenu" />
+      <Button ref="PortForwardingToolButton" class="session-tool-tab" text="映射端口" @click="OnPortForwardingSelected" @contextmenu="OnPortForwardingContextMenu" />
+      <Button ref="SessionInfoToolButton" class="session-tool-tab" text="会话" @click="OnSessionInfoSelected" @contextmenu="OnSessionInfoContextMenu" />
     </View>
     <TerminalToolbar ref="TerminalToolbar" style="width: 100%; height: 48px;" />
     <View ref="ToolWorkspace" class="tool-workspace">
@@ -15,15 +15,16 @@
           <Text class="empty-state-body" text="双击左侧连接或选择后点击连接。每个会话都有独立终端、命令草稿和 SFTP 状态。" />
         </View>
       </View>
-      <Splitter ref="ToolSplit" class="splitter tool-splitter" value="360" minimum="280" maximum="700" vertical="true" reversed="true" />
+      <Splitter ref="ToolSplit" class="splitter tool-splitter" value="360" minimum="280" maximum="700" vertical="true" reversed="true"
+                @input="OnToolSplitChanged" @change="OnToolSplitCommitted" />
       <View ref="SecondaryToolHost" class="tool-host tool-host-secondary" />
     </View>
     <CommandPanel ref="CommandPanel" style="width: 100%;" />
     <View ref="SessionContextStatusRoot" class="session-context-status-bar">
       <FontIcon ref="SessionStatusIcon" class="fluent-icon" font-family="Segoe Fluent Icons" glyph="" />
       <Text ref="SessionStatus" class="session-context-status" text="就绪 - 请选择连接" />
-      <Button ref="CommandEntryButton" class="session-status-action" text="多行命令" />
-      <Button ref="CloseSplitButton" class="session-status-action" text="关闭分屏" />
+      <Button ref="CommandEntryButton" class="session-status-action" text="多行命令" @click="OnCommandPanelRequested" />
+      <Button ref="CloseSplitButton" class="session-status-action" text="关闭分屏" @click="OnCloseSplitRequested" />
     </View>
     <View ref="ToolStaging" class="tool-staging">
       <InspectorSidebar ref="ToolInspector" style="width: 100%; height: 100%;" />
@@ -32,6 +33,35 @@
   </View>
 </template>
 <script lang="csharp" namespace="TermSquared.App.Components" name="WorkspaceCenter" access="internal">
+using TermSquared.App;
+
+public static readonly ComponentEvent<SessionToolKind> ToolSelectedEvent = new("tool-selected");
+public static readonly ComponentEvent<ToolSplitRequest> ToolSplitRequestedEvent = new("tool-split-requested");
+public static readonly ComponentEvent<float> ToolSplitChangedEvent = new("tool-split-changed");
+public static readonly ComponentEvent<float> ToolSplitCommittedEvent = new("tool-split-committed");
+public static readonly ComponentEvent CommandPanelRequestedEvent = new("command-panel-requested");
+public static readonly ComponentEvent CloseSplitRequestedEvent = new("close-split-requested");
+
+private void OnTerminalSelected() => Emit(ToolSelectedEvent, SessionToolKind.Terminal);
+private void OnSftpSelected() => Emit(ToolSelectedEvent, SessionToolKind.Sftp);
+private void OnPortForwardingSelected() => Emit(ToolSelectedEvent, SessionToolKind.PortForwarding);
+private void OnSessionInfoSelected() => Emit(ToolSelectedEvent, SessionToolKind.SessionInfo);
+private void OnCommandPanelRequested() => Emit(CommandPanelRequestedEvent);
+private void OnCloseSplitRequested() => Emit(CloseSplitRequestedEvent);
+private void OnToolSplitChanged() => Emit(ToolSplitChangedEvent, ToolSplit.Value);
+private void OnToolSplitCommitted() => Emit(ToolSplitCommittedEvent, ToolSplit.Value);
+
+private void OnTerminalContextMenu(Event e) => EmitToolSplit(e, SessionToolKind.Terminal);
+private void OnSftpContextMenu(Event e) => EmitToolSplit(e, SessionToolKind.Sftp);
+private void OnPortForwardingContextMenu(Event e) => EmitToolSplit(e, SessionToolKind.PortForwarding);
+private void OnSessionInfoContextMenu(Event e) => EmitToolSplit(e, SessionToolKind.SessionInfo);
+
+private void EmitToolSplit(Event e, SessionToolKind tool)
+{
+    if (e is not PointerEvent pointer) return;
+    e.PreventDefault();
+    Emit(ToolSplitRequestedEvent, new ToolSplitRequest(tool, new Point(pointer.ClientX, pointer.ClientY)));
+}
 </script>
 <style>
   .workspace-center { display: flex; flex: 1; flex-direction: column; width: auto; height: 100%; min-width: 0; gap: 0; }

@@ -18,27 +18,22 @@ public Element BottomPanel => Center.CommandPanel;
 public View LeftSidebarRoot => LeftSidebar.Root;
 public Element RightSidebarRoot => Center.ToolInspector;
 
+public TopBar TopBarComponent => TopBar;
+public ConnectionSidebar ConnectionSidebarComponent => LeftSidebar;
+public WorkspaceCenter WorkspaceCenterComponent => Center;
+public SessionTabs SessionTabsComponent => Center.SessionTabs;
+public TerminalToolbar TerminalToolbarComponent => Center.TerminalToolbar;
+public CommandPanel CommandPanelComponent => Center.CommandPanel;
+public InspectorSidebar SftpComponent => Center.ToolInspector;
+public SessionInfoPanel SessionInfoComponent => Center.SessionInfo;
+
 public FontIcon ConnectionHeaderIcon => LeftSidebar.HeaderIcon;
 public FontIcon CommandPanelIcon => Center.CommandPanel.PanelIcon;
 public FontIcon SessionStatusIcon => Center.SessionStatusIcon;
 public FontIcon SftpPanelIcon => Center.ToolInspector.PanelIcon;
 public FontIcon RightPanelIcon => Center.SessionInfo.PanelIcon;
 
-public MenuItem ConnectMenuItem => TopBar.ConnectMenuItem;
-public MenuItem DisconnectMenuItem => TopBar.DisconnectMenuItem;
-public MenuItem ExitMenuItem => TopBar.ExitMenuItem;
-public MenuItem ToggleLeftMenuItem => TopBar.ToggleLeftMenuItem;
-public MenuItem ToggleRightMenuItem => TopBar.ToggleRightMenuItem;
-public MenuItem ToggleBottomMenuItem => TopBar.ToggleBottomMenuItem;
-public MenuItem RefreshRemoteMenuItem => TopBar.RefreshRemoteMenuItem;
-public MenuItem RestoreConnectionsMenuItem => TopBar.RestoreConnectionsMenuItem;
-public MenuItem ProbeVncMenuItem => TopBar.ProbeVncMenuItem;
-public MenuItem LaunchRdpMenuItem => TopBar.LaunchRdpMenuItem;
-public MenuItem AboutMenuItem => TopBar.AboutMenuItem;
-
 public Input ConnectionFilter => LeftSidebar.ConnectionFilter;
-public Button AddConnectionButton => LeftSidebar.AddConnectionButton;
-public Button EditConnectionButton => LeftSidebar.EditConnectionButton;
 public Button NewFolderButton => LeftSidebar.NewFolderButton;
 public Button ConnectionMoreButton => LeftSidebar.ConnectionMoreButton;
 public Tree ConnectionTree => LeftSidebar.ConnectionTree;
@@ -70,13 +65,15 @@ public Button ExpandCommandsButton => Center.CommandPanel.ExpandCommandsButton;
 
 public View HistoryPanel => Center.SessionInfo.HistoryPanel;
 public View HistoryItems => Center.SessionInfo.HistoryItems;
-public View SftpPanel => Center.ToolInspector.SftpPanel;
-public Text SftpPathText => Center.ToolInspector.SftpPathText;
+public Input SftpPathInput => Center.ToolInspector.SftpPathInput;
+public Button SftpBackButton => Center.ToolInspector.SftpBackButton;
+public Button SftpForwardButton => Center.ToolInspector.SftpForwardButton;
+public Button SftpUpButton => Center.ToolInspector.SftpUpButton;
 public Button NewRemoteFolderButton => Center.ToolInspector.NewRemoteFolderButton;
 public Button UploadRemoteFileButton => Center.ToolInspector.UploadRemoteFileButton;
 public Button SftpMoreButton => Center.ToolInspector.SftpMoreButton;
 public Button RefreshSftpButton => Center.ToolInspector.RefreshSftpButton;
-public Tree SftpTree => Center.ToolInspector.SftpTree;
+public VirtualList SftpFileList => Center.ToolInspector.SftpFileList;
 public View SecurityPanel => Center.SessionInfo.SecurityPanel;
 public Text Details => Center.SessionInfo.Details;
 public View HostKeyApproval => Center.SessionInfo.HostKeyApproval;

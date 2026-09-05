@@ -3,30 +3,30 @@
     <MenuBar ref="MenuBar" class="top-menu">
       <MenuItem ref="SessionMenu" text="会话">
         <Menu>
-          <MenuItem ref="ConnectMenuItem" text="连接所选会话" />
-          <MenuItem ref="DisconnectMenuItem" text="断开当前会话" />
+          <MenuItem ref="ConnectMenuItem" text="连接所选会话" @click="OnConnectRequested" />
+          <MenuItem ref="DisconnectMenuItem" text="断开当前会话" @click="OnDisconnectRequested" />
           <MenuSeparator />
-          <MenuItem ref="ExitMenuItem" text="退出" />
+          <MenuItem ref="ExitMenuItem" text="退出" @click="OnExitRequested" />
         </Menu>
       </MenuItem>
       <MenuItem ref="ViewMenu" text="视图">
         <Menu>
-          <MenuItem ref="ToggleLeftMenuItem" text="连接侧栏" />
-          <MenuItem ref="ToggleRightMenuItem" text="SFTP 右侧分屏" />
-          <MenuItem ref="ToggleBottomMenuItem" text="多行命令面板" />
+          <MenuItem ref="ToggleLeftMenuItem" text="连接侧栏" @click="OnToggleLeftRequested" />
+          <MenuItem ref="ToggleRightMenuItem" text="SFTP 右侧分屏" @click="OnToggleSftpSplitRequested" />
+          <MenuItem ref="ToggleBottomMenuItem" text="多行命令面板" @click="OnToggleCommandPanelRequested" />
         </Menu>
       </MenuItem>
       <MenuItem ref="ToolsMenu" text="工具">
         <Menu>
-          <MenuItem ref="RefreshRemoteMenuItem" text="刷新远程目录" />
-          <MenuItem ref="RestoreConnectionsMenuItem" text="恢复已移除连接" />
-          <MenuItem ref="ProbeVncMenuItem" text="检测所选主机 VNC" />
-          <MenuItem ref="LaunchRdpMenuItem" text="启动所选主机 RDP" />
+          <MenuItem ref="RefreshRemoteMenuItem" text="刷新远程目录" @click="OnRefreshRemoteRequested" />
+          <MenuItem ref="RestoreConnectionsMenuItem" text="恢复已移除连接" @click="OnRestoreConnectionsRequested" />
+          <MenuItem ref="ProbeVncMenuItem" text="检测所选主机 VNC" @click="OnProbeVncRequested" />
+          <MenuItem ref="LaunchRdpMenuItem" text="启动所选主机 RDP" @click="OnLaunchRdpRequested" />
         </Menu>
       </MenuItem>
       <MenuItem ref="HelpMenu" text="帮助">
         <Menu>
-          <MenuItem ref="AboutMenuItem" text="关于 TermSquared" />
+          <MenuItem ref="AboutMenuItem" text="关于 TermSquared" @click="OnAboutRequested" />
         </Menu>
       </MenuItem>
     </MenuBar>
@@ -34,6 +34,29 @@
   </View>
 </template>
 <script lang="csharp" namespace="TermSquared.App.Components" name="TopBar" access="internal">
+public static readonly ComponentEvent ConnectRequestedEvent = new("connect-requested");
+public static readonly ComponentEvent DisconnectRequestedEvent = new("disconnect-requested");
+public static readonly ComponentEvent ExitRequestedEvent = new("exit-requested");
+public static readonly ComponentEvent ToggleLeftRequestedEvent = new("toggle-left-sidebar");
+public static readonly ComponentEvent ToggleSftpSplitRequestedEvent = new("toggle-sftp-split");
+public static readonly ComponentEvent ToggleCommandPanelRequestedEvent = new("toggle-command-panel");
+public static readonly ComponentEvent RefreshRemoteRequestedEvent = new("refresh-remote");
+public static readonly ComponentEvent RestoreConnectionsRequestedEvent = new("restore-connections");
+public static readonly ComponentEvent ProbeVncRequestedEvent = new("probe-vnc");
+public static readonly ComponentEvent LaunchRdpRequestedEvent = new("launch-rdp");
+public static readonly ComponentEvent AboutRequestedEvent = new("about");
+
+private void OnConnectRequested() => Emit(ConnectRequestedEvent);
+private void OnDisconnectRequested() => Emit(DisconnectRequestedEvent);
+private void OnExitRequested() => Emit(ExitRequestedEvent);
+private void OnToggleLeftRequested() => Emit(ToggleLeftRequestedEvent);
+private void OnToggleSftpSplitRequested() => Emit(ToggleSftpSplitRequestedEvent);
+private void OnToggleCommandPanelRequested() => Emit(ToggleCommandPanelRequestedEvent);
+private void OnRefreshRemoteRequested() => Emit(RefreshRemoteRequestedEvent);
+private void OnRestoreConnectionsRequested() => Emit(RestoreConnectionsRequestedEvent);
+private void OnProbeVncRequested() => Emit(ProbeVncRequestedEvent);
+private void OnLaunchRdpRequested() => Emit(LaunchRdpRequestedEvent);
+private void OnAboutRequested() => Emit(AboutRequestedEvent);
 </script>
 <style>
   .top-bar { display: flex; flex-direction: row; align-items: center; width: 100%; height: 44px; gap: 8px; }

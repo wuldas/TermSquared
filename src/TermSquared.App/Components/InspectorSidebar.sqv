@@ -7,26 +7,112 @@
     </View>
     <View ref="SftpPanel" class="right-context-panel">
       <View class="sftp-toolbar">
-        <View class="sftp-location">
-          <FontIcon class="sftp-location-icon" font-family="Segoe Fluent Icons" glyph="" />
-          <Text ref="SftpPathText" class="sftp-path-text" text="/" />
+        <View class="sftp-navigation">
+          <Button ref="SftpBackButton" class="icon-button sftp-icon-button" text="" @click="OnBackRequested" />
+          <Button ref="SftpForwardButton" class="icon-button sftp-icon-button" text="" @click="OnForwardRequested" />
+          <Button ref="SftpUpButton" class="icon-button sftp-icon-button" text="" @click="OnUpRequested" />
         </View>
-        <View class="sftp-actions">
-          <Button ref="NewRemoteFolderButton" class="icon-button sftp-icon-button" text="" />
-          <Button ref="UploadRemoteFileButton" class="icon-button sftp-icon-button" text="" />
-          <Button ref="SftpMoreButton" class="icon-button sftp-icon-button" text="" />
-          <Button ref="RefreshSftpButton" class="icon-button sftp-icon-button" text="" />
-        </View>
+        <Input ref="SftpPathInput" class="sftp-path-input" value="/" @keydown="OnPathKeyDown" />
+        <Button ref="RefreshSftpButton" class="icon-button sftp-icon-button" text="" @click="OnRefreshRequested" />
       </View>
-      <View class="sftp-tree-caption">
-        <Text class="sftp-tree-title" text="远程文件" />
-        <Text class="sftp-tree-hint" text="选择项目后可进行更多操作" />
+      <View class="sftp-command-bar">
+        <Text class="sftp-command-title" text="远程文件" />
+        <Button ref="NewRemoteFolderButton" class="icon-button sftp-icon-button" text="" @click="OnNewFolderRequested" />
+        <Button ref="UploadRemoteFileButton" class="icon-button sftp-icon-button" text="" @click="OnUploadRequested" />
+        <Button ref="SftpMoreButton" class="icon-button sftp-icon-button" text="" @click="OnMoreRequested" />
       </View>
-      <Tree ref="SftpTree" class="sftp-tree" />
+      <View class="sftp-list-header">
+        <Text class="sftp-column-name" text="名称" />
+        <Text class="sftp-column-size" text="大小" />
+        <Text class="sftp-column-modified" text="修改时间" />
+      </View>
+      <VirtualList ref="SftpFileList" class="sftp-file-list"
+                   @selectionchange="OnSelectionChanged"
+                   @click="OnFileListClick"
+                   @contextmenu="OnContextMenuRequested"
+                   @keydown="OnFileListKeyDown" />
     </View>
   </View>
 </template>
 <script lang="csharp" namespace="TermSquared.App.Components" name="InspectorSidebar" access="internal">
+using TermSquared.App;
+using TermSquared.Core;
+
+public static readonly ComponentEvent BackRequestedEvent = new("back-requested");
+public static readonly ComponentEvent ForwardRequestedEvent = new("forward-requested");
+public static readonly ComponentEvent UpRequestedEvent = new("up-requested");
+public static readonly ComponentEvent RefreshRequestedEvent = new("refresh-requested");
+public static readonly ComponentEvent NewFolderRequestedEvent = new("new-folder-requested");
+public static readonly ComponentEvent UploadRequestedEvent = new("upload-requested");
+public static readonly ComponentEvent MoreRequestedEvent = new("more-requested");
+public static readonly ComponentEvent<string> PathSubmittedEvent = new("path-submitted");
+public static readonly ComponentEvent<RemoteEntry> SelectionChangedEvent = new("selection-changed");
+public static readonly ComponentEvent<RemoteEntry> EntryActivatedEvent = new("entry-activated");
+public static readonly ComponentEvent<SftpContextMenuRequest> ContextMenuRequestedEvent = new("context-menu-requested");
+
+private void OnBackRequested() => Emit(BackRequestedEvent);
+private void OnForwardRequested() => Emit(ForwardRequestedEvent);
+private void OnUpRequested() => Emit(UpRequestedEvent);
+private void OnRefreshRequested() => Emit(RefreshRequestedEvent);
+private void OnNewFolderRequested() => Emit(NewFolderRequestedEvent);
+private void OnUploadRequested() => Emit(UploadRequestedEvent);
+private void OnMoreRequested() => Emit(MoreRequestedEvent);
+
+private void OnPathKeyDown(Event e)
+{
+    if (e is not KeyboardEvent keyboard || keyboard.KeyCode != 13) return;
+    e.PreventDefault();
+    Emit(PathSubmittedEvent, SftpPathInput.Value);
+}
+
+private void OnSelectionChanged()
+{
+    if (SftpSelection.GetSelectedEntry(SftpFileList) is { } entry)
+        Emit(SelectionChangedEvent, entry);
+}
+
+private void OnFileListClick(Event e)
+{
+    if (FindListItem(e.Target) is not { } item) return;
+    if (e.TimeStamp - item.LastClickTime <= 500)
+    {
+        item.LastClickTime = 0;
+        Emit(EntryActivatedEvent, item.Entry);
+    }
+    else item.LastClickTime = e.TimeStamp;
+}
+
+private void OnContextMenuRequested(Event e)
+{
+    if (e is not PointerEvent pointer) return;
+    if (FindListItem(e.Target) is not { } item) return;
+    SftpFileList.SelectIndex(item.Index);
+    Emit(ContextMenuRequestedEvent, new SftpContextMenuRequest(item.Entry, new Point(pointer.ClientX, pointer.ClientY)));
+    e.PreventDefault();
+}
+
+private void OnFileListKeyDown(Event e)
+{
+    if (e is not KeyboardEvent keyboard) return;
+    if (keyboard.KeyCode == 13 && SftpSelection.GetSelectedEntry(SftpFileList) is { } entry)
+    {
+        e.PreventDefault();
+        Emit(EntryActivatedEvent, entry);
+    }
+    else if ((keyboard.KeyCode == 93 || keyboard.ShiftKey && keyboard.KeyCode == 121) &&
+             SftpSelection.GetSelectedEntry(SftpFileList) is { } selected)
+    {
+        e.PreventDefault();
+        Emit(ContextMenuRequestedEvent, new SftpContextMenuRequest(selected, null));
+    }
+}
+
+private static SftpListItem? FindListItem(EventTarget? target)
+{
+    for (var current = target as Element; current is not null; current = current.Parent)
+        if (current is SftpListItem item) return item;
+    return null;
+}
 </script>
 <style>
   .sidebar { display: flex; flex-direction: column; height: 100%; gap: 0; }
@@ -35,15 +121,16 @@
   .panel-title { flex: 1; color: #e7edf5; font-size: 14px; }
   .panel-subtitle { flex-shrink: 0; color: #718096; white-space: nowrap; }
   .right-context-panel { display: flex; flex: 1; flex-direction: column; width: 100%; height: auto; min-height: 0; gap: 0; }
-  .sftp-toolbar { display: flex; flex-direction: row; align-items: center; width: 100%; height: 40px; padding: 5px 10px; gap: 7px; background: #111821; border-bottom: 1px solid #253040; }
-  .sftp-location { display: flex; flex: 1; flex-direction: row; align-items: center; width: auto; height: 32px; min-width: 0; padding: 0 9px; gap: 7px; overflow: hidden; background: #0b1118; border: 1px solid #2b394c; border-radius: 6px; }
-  .sftp-location-icon { flex-shrink: 0; width: 14px; height: 14px; color: #8fb6ff; font-size: 14px; }
-  .sftp-path-text { flex: 1; min-width: 0; color: #dfe7f2; font-size: 12px; white-space: nowrap; }
-  .sftp-actions { display: flex; flex-direction: row; align-items: center; width: auto; height: 28px; gap: 2px; }
+  .sftp-toolbar { display: flex; flex-direction: row; align-items: center; width: 100%; height: 40px; padding: 5px 10px; gap: 6px; background: #111821; border-bottom: 1px solid #253040; }
+  .sftp-navigation { display: flex; flex-direction: row; align-items: center; width: auto; height: 28px; gap: 2px; }
+  .sftp-path-input { flex: 1; width: auto; height: 30px; min-width: 80px; padding: 4px 9px; background: #0b1118; color: #dfe7f2; border: 1px solid #2b394c; border-radius: 6px; font-family: 'Cascadia Mono', Consolas, monospace; font-size: 12px; }
   .icon-button { width: 30px; height: 30px; padding: 0; font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets'; font-size: 15px; }
   .sftp-icon-button { width: 26px; height: 26px; font-size: 13px; }
-  .sftp-tree-caption { display: flex; flex-direction: row; align-items: center; width: 100%; height: 30px; padding: 7px 12px 3px 12px; gap: 8px; }
-  .sftp-tree-title { flex: 1; color: #cbd6e5; font-size: 12px; font-weight: 700; }
-  .sftp-tree-hint { flex-shrink: 0; color: #718096; font-size: 11px; white-space: nowrap; }
-  .sftp-tree { display: flex; flex: 1; min-height: 0; padding: 4px 10px 12px 10px; background: #10161e; }
+  .sftp-command-bar { display: flex; flex-direction: row; align-items: center; width: 100%; height: 36px; padding: 4px 10px; gap: 4px; background: #0f151d; border-bottom: 1px solid #202a38; }
+  .sftp-command-title { flex: 1; min-width: 0; color: #cbd6e5; font-size: 12px; font-weight: 700; }
+  .sftp-list-header { display: flex; flex-direction: row; align-items: center; width: 100%; height: 30px; padding: 0 12px; gap: 8px; background: #0d131a; color: #7d8ba0; border-bottom: 1px solid #253040; font-size: 11px; }
+  .sftp-column-name { flex: 1; min-width: 100px; }
+  .sftp-column-size { width: 64px; flex-shrink: 0; }
+  .sftp-column-modified { width: 112px; flex-shrink: 0; }
+  .sftp-file-list { display: flex; flex: 1; min-height: 0; padding: 4px 6px 8px 6px; background: #10161e; }
 </style>

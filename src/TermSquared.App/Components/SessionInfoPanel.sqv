@@ -20,14 +20,19 @@
         <Text ref="Details" class="security-details" text="选择连接后，这里会显示目标地址与主机密钥状态。" />
         <View ref="HostKeyApproval" class="warning-surface">
           <Text class="warning-title" text="需要确认未知主机密钥" />
-          <Button ref="TrustOnceButton" class="action-button" text="仅本次信任并连接" />
-          <Button ref="TrustStoreButton" class="action-button button-primary" text="信任并保存此密钥" />
+          <Button ref="TrustOnceButton" class="action-button" text="仅本次信任并连接" @click="OnTrustOnceRequested" />
+          <Button ref="TrustStoreButton" class="action-button button-primary" text="信任并保存此密钥" @click="OnTrustStoreRequested" />
         </View>
       </View>
     </View>
   </View>
 </template>
 <script lang="csharp" namespace="TermSquared.App.Components" name="SessionInfoPanel" access="internal">
+public static readonly ComponentEvent TrustOnceRequestedEvent = new("trust-once-requested");
+public static readonly ComponentEvent TrustStoreRequestedEvent = new("trust-store-requested");
+
+private void OnTrustOnceRequested() => Emit(TrustOnceRequestedEvent);
+private void OnTrustStoreRequested() => Emit(TrustStoreRequestedEvent);
 </script>
 <style>
   .session-info-tool { display: flex; flex-direction: column; width: 100%; height: 100%; gap: 0; background: #10161e; }

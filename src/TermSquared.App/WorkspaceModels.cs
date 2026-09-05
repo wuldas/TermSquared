@@ -1,5 +1,6 @@
 using Square.Controls;
 using Square.Extensions.Terminal;
+using Square.Graphics;
 using TermSquared.Core;
 using TermSquared.Protocols.Ssh;
 using TermSquared.Security;
@@ -71,6 +72,64 @@ internal static class SessionItemScope
         activeSessionId is Guid active && active == itemSessionId;
 }
 
+internal static class SftpSelection
+{
+    public static RemoteEntry? GetSelectedEntry(VirtualList list) => list.SelectedValue as RemoteEntry;
+}
+
+internal sealed class SftpNavigationState
+{
+    private readonly Stack<string> _backHistory = new();
+    private readonly Stack<string> _forwardHistory = new();
+
+    public string CurrentPath { get; private set; } = "/";
+    public bool CanGoBack => _backHistory.Count > 0;
+    public bool CanGoForward => _forwardHistory.Count > 0;
+    public string? BackPath => _backHistory.TryPeek(out var path) ? path : null;
+    public string? ForwardPath => _forwardHistory.TryPeek(out var path) ? path : null;
+    public string? ParentPath
+    {
+        get
+        {
+            if (CurrentPath == "/") return null;
+            var separator = CurrentPath.LastIndexOf('/');
+            return separator <= 0 ? "/" : CurrentPath[..separator];
+        }
+    }
+
+    public bool NavigateTo(string path)
+    {
+        if (!PathRootPolicy.TryCanonicalizePosixPath(path, out var canonicalPath) ||
+            string.Equals(CurrentPath, canonicalPath, StringComparison.Ordinal))
+            return false;
+        _backHistory.Push(CurrentPath);
+        _forwardHistory.Clear();
+        CurrentPath = canonicalPath;
+        return true;
+    }
+
+    public bool GoBack()
+    {
+        if (!_backHistory.TryPop(out var path)) return false;
+        _forwardHistory.Push(CurrentPath);
+        CurrentPath = path;
+        return true;
+    }
+
+    public bool GoForward()
+    {
+        if (!_forwardHistory.TryPop(out var path)) return false;
+        _backHistory.Push(CurrentPath);
+        CurrentPath = path;
+        return true;
+    }
+
+    public bool GoUp()
+    {
+        return ParentPath is { } path && NavigateTo(path);
+    }
+}
+
 internal sealed class WorkspaceSession(
     ConnectionProfile profile,
     string displayName,
@@ -85,6 +144,7 @@ internal sealed class WorkspaceSession(
     public TerminalView Terminal { get; } = terminal;
     public View? TabContainer { get; set; }
     public Button? TabButton { get; set; }
+    public Button? TabCloseButton { get; set; }
     public SessionState State { get; set; } = SessionState.Created;
     public SshSession? Transport { get; set; }
     public SshShellSession? Shell { get; set; }
@@ -105,8 +165,9 @@ internal sealed class WorkspaceSession(
     public float SplitWidth { get; set; } = 360;
     public View? PortForwardingPanel { get; set; }
     public bool IsClosing { get; set; }
-    public string CurrentRemotePath { get; set; } = "/";
-    public SftpTreeItem? SftpRoot { get; set; }
+    public SftpNavigationState SftpNavigation { get; } = new();
+    public IReadOnlyList<RemoteEntry> SftpEntries { get; set; } = [];
+    public string CurrentRemotePath => SftpNavigation.CurrentPath;
     public RemoteEntry? SelectedRemoteEntry { get; set; }
     public SemaphoreSlim LifecycleGate { get; } = new(1, 1);
     public SemaphoreSlim OutboundGate { get; } = new(1, 1);
@@ -124,15 +185,19 @@ internal sealed class ConnectionFolderTreeItem(ConnectionFolderSettings settings
     public ConnectionFolderSettings Settings { get; } = settings;
 }
 
-internal sealed class SftpTreeItem(Guid sessionId, RemoteEntry? entry, string path, string label) : TreeItem(label)
+internal sealed class SftpListItem(Guid sessionId, RemoteEntry entry, int index) : ListItem
 {
     public Guid SessionId { get; } = sessionId;
-    public RemoteEntry? Entry { get; } = entry;
-    public string Path { get; } = path;
-    public bool IsDirectory => Entry is null || Entry.Kind == RemoteEntryKind.Directory;
-    public bool ChildrenLoaded { get; set; }
-    public bool IsLoading { get; set; }
-    public TreeItem? Placeholder { get; set; }
+    public RemoteEntry Entry { get; } = entry;
+    public int Index { get; } = index;
+    public bool IsDirectory => Entry.Kind == RemoteEntryKind.Directory;
+    public double LastClickTime { get; set; }
 }
+
+internal sealed record SftpContextMenuRequest(RemoteEntry Entry, Point? Position);
+
+internal sealed record ToolSplitRequest(SessionToolKind Tool, Point Position);
+
+internal sealed record ConnectionContextMenuRequest(Point? Position);
 
 internal sealed record RemoteClipboardItem(Guid SessionId, string Path, string Name, bool IsDirectory, bool Cut);

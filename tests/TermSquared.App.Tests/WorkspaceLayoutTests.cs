@@ -24,9 +24,14 @@ public sealed class WorkspaceLayoutTests
         Assert.NotNull(page.SessionStatus);
         Assert.IsType<InspectorSidebar>(page.RightSidebarRoot);
         Assert.IsType<SessionInfoPanel>(page.SessionInfoRoot);
-        Assert.Equal("/", page.SftpPathText.TextContent);
+        Assert.Equal("/", page.SftpPathInput.Value);
+        Assert.IsType<VirtualList>(page.SftpFileList);
+        Assert.NotNull(page.SftpBackButton);
+        Assert.NotNull(page.SftpForwardButton);
+        Assert.NotNull(page.SftpUpButton);
         Assert.Contains(Descendants(page), element => element.ClassList.Contains("sftp-toolbar"));
-        Assert.Contains(Descendants(page), element => element.ClassList.Contains("sftp-location"));
+        Assert.Contains(Descendants(page), element => element.ClassList.Contains("sftp-list-header"));
+        Assert.DoesNotContain(Descendants(page.RightSidebarRoot), element => element is Tree);
         Assert.True(page.RefreshSftpButton.ClassList.Contains("sftp-icon-button"));
         Assert.Equal("多行命令", page.CommandEntryButton.TextContent);
         Assert.DoesNotContain(Descendants(page), element => element.ClassList.Contains("status-chip"));
@@ -48,7 +53,7 @@ public sealed class WorkspaceLayoutTests
 
             Assert.Equal("row", page.RefreshSftpButton.Parent!.Style.Get("flex-direction"));
             Assert.Equal("26px", page.RefreshSftpButton.Style.Get("width"));
-            Assert.Equal("flex", page.SftpPathText.Parent!.Style.Get("display"));
+            Assert.Equal("flex", page.SftpPathInput.Parent!.Style.Get("display"));
         }
         finally
         {

@@ -1,13 +1,26 @@
 <template>
   <View ref="Root" class="workspace-toolbar">
-    <Button ref="ConnectButton" class="icon-button button-primary" text="" />
-    <Button ref="DisconnectButton" class="icon-button button-danger" text="" />
-    <Button ref="RefreshFilesButton" class="icon-button" text="" />
+    <Button ref="ConnectButton" class="icon-button button-primary" text="" @click="OnConnectRequested" />
+    <Button ref="DisconnectButton" class="icon-button button-danger" text="" @click="OnDisconnectRequested" />
+    <Button ref="RefreshFilesButton" class="icon-button" text="" @click="OnRefreshRequested" />
     <View ref="ProtocolToolsHost" class="protocol-tools-host" />
     <Text class="toolbar-hint" text="终端输入会直接发送到活动 SSH Shell" />
   </View>
 </template>
 <script lang="csharp" namespace="TermSquared.App.Components" name="TerminalToolbar" access="internal">
+public static readonly ComponentEvent ConnectRequestedEvent = new("connect-requested");
+public static readonly ComponentEvent DisconnectRequestedEvent = new("disconnect-requested");
+public static readonly ComponentEvent RefreshRequestedEvent = new("refresh-requested");
+public static readonly ComponentEvent<string> ProtocolActionRequestedEvent = new("protocol-action-requested");
+
+public void RequestProtocolAction(string action)
+{
+    if (!string.IsNullOrWhiteSpace(action)) Emit(ProtocolActionRequestedEvent, action);
+}
+
+private void OnConnectRequested() => Emit(ConnectRequestedEvent);
+private void OnDisconnectRequested() => Emit(DisconnectRequestedEvent);
+private void OnRefreshRequested() => Emit(RefreshRequestedEvent);
 </script>
 <style>
   .workspace-toolbar { display: flex; flex-direction: row; align-items: center; width: 100%; height: 48px; padding: 7px 10px; gap: 8px; }

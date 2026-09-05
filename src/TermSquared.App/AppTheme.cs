@@ -236,25 +236,52 @@ internal static class AppTheme
           border-bottom: 1px solid #253040;
         }
 
+        .session-tab-container {
+          background: #0f151d;
+          border: 1px solid #253040;
+          border-bottom: 0;
+          border-radius: 8px 8px 0 0;
+          overflow: hidden;
+        }
+
+        .session-tab-container.active {
+          background: #172130;
+          border-color: #3a5068;
+          box-shadow: 0 -1px 0 #4f8cff;
+        }
+
+        .session-tab-container:not(.active):hover {
+          border-color: #3c5068;
+        }
+
         .session-tab {
-          background: #182230;
-          color: #dfe7f2;
-          border: 1px solid #344358;
-          border-bottom: 2px solid #4f8cff;
-          border-radius: 7px 7px 0 0;
+          background: #0f151d;
+          color: #8290a3;
+          border: 1px solid #253040;
+          border-bottom: 2px solid transparent;
+          border-radius: 7px 0 0 0;
         }
 
         .session-tab.active {
-          background: #20324b;
-          color: #ffffff;
+          background: #172130;
+          color: #e6edf6;
+          font-weight: 700;
+          border-color: #3a5068;
+          border-bottom-color: #4f8cff;
         }
 
         .session-tab-close {
-          background: #182230;
-          color: #8d9aae;
-          border: 1px solid #344358;
+          background: #0f151d;
+          color: #68768a;
+          border: 1px solid #253040;
           border-left: 0;
           border-radius: 0 7px 0 0;
+        }
+
+        .session-tab-container.active .session-tab-close {
+          background: #172130;
+          color: #c6d0df;
+          border-color: #3a5068;
         }
 
         .session-tab-close:hover {
@@ -323,10 +350,6 @@ internal static class AppTheme
           font-size: 13px;
         }
 
-        .sftp-path-bar {
-          background: #111821;
-          border-bottom: 1px solid #253040;
-        }
 
         .tree-toolbar {
           background: #0f151d;
@@ -355,13 +378,12 @@ internal static class AppTheme
         }
 
         .connection-tree,
-        .sftp-tree {
+        .sftp-file-list {
           background: #10161e;
           color: #bdc8d7;
         }
 
-        .connection-tree TreeItem,
-        .sftp-tree TreeItem {
+        .connection-tree TreeItem {
           color: #bdc8d7;
           background: transparent;
           border-radius: 5px;
@@ -369,31 +391,25 @@ internal static class AppTheme
         }
 
         .connection-tree TreeItem:hover,
-        .sftp-tree TreeItem:hover {
+        .sftp-file-list ListItem:hover {
           background: #172130;
           color: #ffffff;
         }
 
         .connection-tree TreeItem:checked,
-        .sftp-tree TreeItem:checked {
+        .sftp-file-list ListItem:checked {
           background: #1c3150;
           color: #e8f1ff;
         }
 
-        .connection-folder,
-        .sftp-directory {
+        .connection-folder {
           color: #d7e5f9;
           font-weight: 600;
         }
 
-        .sftp-file {
-          font-family: "Cascadia Mono", Consolas, monospace;
-          color: #b8c4d4;
-        }
-
-        .tree-placeholder {
-          color: #718096;
-          font-style: italic;
+        .sftp-file-list ListItem {
+          background: transparent;
+          border-radius: 5px;
         }
 
         .context-menu {
